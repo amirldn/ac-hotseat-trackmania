@@ -44,14 +44,27 @@ live standings, plus the target time you need to beat.
 
 ## Installation
 
-1. Install [Content Manager](https://acstuff.club/app/) and **Custom Shaders Patch 0.1.79
-   or newer** (0.2.x recommended).
-2. Copy the `apps/lua/tm_hotseat` folder from this repo into your game folder so you end up
-   with:
+**Requirements:** [Content Manager](https://acstuff.club/app/) and **Custom Shaders Patch
+0.1.79 or newer** (0.2.x recommended).
+
+### Quick install (recommended)
+
+1. Download **Source code (zip)** from the
+   [v1.0.0 release](https://github.com/amirldn/ac-hotseat-trackmania/releases/tag/1.0.0).
+2. **Drag the zip straight into Content Manager** — it detects the `apps/lua/tm_hotseat`
+   folder inside and installs it for you. Done.
+3. Start any **single-player Practice or Hotlap session** (one car, any track), then open
+   the right-side apps taskbar and enable **TM Hotseat**. Drag the window to the top-left
+   corner.
+
+### Manual install
+
+1. Download and unzip the release (or clone this repo).
+2. Copy the `apps/lua/tm_hotseat` folder into your game folder so you end up with:
    ```
    ...\SteamApps\common\assettocorsa\apps\lua\tm_hotseat\manifest.ini
    ```
-3. Start any **single-player Practice or Hotlap session** (one car, any track).
+3. Start a **single-player Practice or Hotlap session** (one car, any track).
 4. In-game, open the right-side apps taskbar and enable **TM Hotseat**. Drag the window to
    the top-left corner.
 
