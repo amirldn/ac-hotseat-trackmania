@@ -47,6 +47,7 @@ M.state = {
   lapInvalid = false,
   lapDirty = false,  -- teleported/restarted mid-lap: next completed lap doesn't count
   cutTimer = 0,
+  lastLapTimeMs = nil,  -- previous frame's running lap timer, to spot external restarts
 }
 
 -- ----------------------------------------------------------------------------
@@ -220,8 +221,19 @@ function M.confirmHandover()
   s.lapInvalid = false
   s.lapDirty = true
   s.cutTimer = 0
+  s.lastLapTimeMs = nil
   ghosts.abortRecording()
   M.save()
+end
+
+---Discard any in-progress lap and start fresh from the line: clear the cut
+---flag, re-arm the clean-lap gate and drop the current ghost recording. Used by
+---the Restart button and whenever an external restart is detected mid-turn.
+function M.armCleanLap()
+  M.state.lapInvalid = false
+  M.state.lapDirty = true
+  M.state.cutTimer = 0
+  ghosts.abortRecording()
 end
 
 ---Restart button: back to the hotlap start, fuel keeps its level (and keeps
@@ -229,10 +241,7 @@ end
 function M.requestRestart()
   if M.state.phase ~= M.PHASE_DRIVING then return end
   M.teleportToStart()
-  M.state.lapDirty = true
-  M.state.lapInvalid = false
-  M.state.cutTimer = 0
-  ghosts.abortRecording()
+  M.armCleanLap()
 end
 
 ---Best-effort teleport chain; not every CSP build/session allows every method.
@@ -360,6 +369,23 @@ function M.update(dt)
       return
     end
   end
+
+  -- Detect a restart the app didn't trigger itself: a pause-menu "restart
+  -- session", a wheel button, or any external teleport back to the line. These
+  -- either drop the lap counter (session restart) or reset the running lap
+  -- timer without completing a lap. Re-arm a clean lap so a cut that was flagged
+  -- *before* the restart can't void the fresh lap that follows.
+  local lapTimeMs = car.lapTimeMs or 0
+  if s.lapBase ~= nil then
+    local droppedLap = car.lapCount < s.lapBase
+    local timerReset = s.lastLapTimeMs ~= nil and s.lastLapTimeMs > 3000
+      and lapTimeMs < 1500 and car.lapCount <= s.lapBase
+    if droppedLap or timerReset then
+      s.lapBase = car.lapCount
+      M.armCleanLap()
+    end
+  end
+  s.lastLapTimeMs = lapTimeMs
 
   -- Track-cut detection: too many wheels off track for too long voids the lap.
   local wheelsOut = car.wheelsOutside or 0

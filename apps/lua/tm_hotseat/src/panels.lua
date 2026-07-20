@@ -51,14 +51,16 @@ local function fullWidth()
   return ok and w or 320
 end
 
-local function fuelBar(frac, height)
+local function fuelBar(frac, height, color)
   frac = math.max(0, math.min(1, frac))
   local h = height or 14
   local ok = pcall(function()
     local p1 = ui.getCursor()
     local w = fullWidth()
     ui.drawRectFilled(p1, p1 + vec2(w, h), COL_BAR_BG, 3)
-    ui.drawRectFilled(p1, p1 + vec2(w * frac, h), frac < 0.2 and COL_FUEL_LOW or COL_FUEL_OK, 3)
+    -- Low fuel always warns red, otherwise use the requested (player) colour.
+    local fill = (frac < 0.2 and COL_FUEL_LOW) or color or COL_FUEL_OK
+    ui.drawRectFilled(p1, p1 + vec2(w * frac, h), fill, 3)
     ui.dummy(vec2(w, h))
   end)
   if not ok then ui.text(string.format('fuel %3d%%', frac * 100)) end
@@ -66,6 +68,90 @@ end
 
 local function wideButton(label, h)
   return ui.button(label, vec2(fullWidth(), h or 36))
+end
+
+-- ----------------------------------------------------------------------------
+-- Trackmania-style name-plates
+-- ----------------------------------------------------------------------------
+
+-- Stable per-player colours (keyed by the player's slot index, not their rank).
+local PLAYER_COLORS = {
+  rgbm(0.60, 0.25, 0.85, 1), -- violet
+  rgbm(0.93, 0.82, 0.15, 1), -- yellow
+  rgbm(0.28, 0.78, 0.32, 1), -- green
+  rgbm(0.90, 0.20, 0.18, 1), -- red
+  rgbm(0.96, 0.55, 0.13, 1), -- orange
+  rgbm(0.26, 0.68, 0.95, 1), -- blue
+  rgbm(0.80, 0.62, 0.42, 1), -- tan
+  rgbm(0.62, 0.64, 0.70, 1), -- steel
+}
+
+local function playerColor(idx)
+  return PLAYER_COLORS[(idx - 1) % #PLAYER_COLORS + 1]
+end
+
+---MM:SS.mmm, e.g. 00:15.673 (Trackmania leaderboard clock).
+local function fmtClock(ms)
+  local t = math.max(0, math.floor(ms))
+  local m = math.floor(t / 60000)
+  return string.format('%02d:%06.3f', m, (t - m * 60000) / 1000)
+end
+
+---Leader shows their absolute lap; everyone else shows +gap to the leader.
+local function fmtGap(best, leaderBest)
+  if best == nil then return '--:--.---' end
+  if leaderBest == nil or best <= leaderBest then return fmtClock(best) end
+  return '+' .. fmtClock(best - leaderBest)
+end
+
+local function measure(text)
+  local ok, v = pcall(ui.measureText, text)
+  if ok and v then return v end
+  return vec2(#text * 8, 16)
+end
+
+local NAMEPLATE_H = 30
+
+---One Trackmania leaderboard row: coloured plate whose fill = remaining fuel,
+---name on the left, time/gap on the right. Everything past the plate itself is
+---best-effort so the coloured bar still renders on odd CSP builds.
+local function nameplate(name, fuelFrac, color, rightText, opts)
+  opts = opts or {}
+  local w = fullWidth()
+  local h = NAMEPLATE_H
+  local drew = pcall(function()
+    local p1 = ui.getCursor()
+    ui.drawRectFilled(p1, p1 + vec2(w, h), COL_BAR_BG, 4)
+    local frac = math.max(0, math.min(1, fuelFrac or 0))
+    if frac > 0.001 then
+      ui.drawRectFilled(p1, p1 + vec2(w * frac, h), opts.dead and COL_DEAD or color, 4)
+    end
+    if opts.active then pcall(ui.drawRect, p1, p1 + vec2(w, h), rgbm(1, 1, 1, 0.9), 4, 2) end
+
+    local textCol = opts.dead and COL_DIM or rgbm(1, 1, 1, 1)
+    local label = (opts.marker and (opts.marker .. ' ') or '') .. name
+    pcall(function()
+      withFont(ui.Font.Title, function()
+        local ts = measure(label)
+        ui.setCursor(p1 + vec2(10, (h - ts.y) / 2))
+        colText(label, textCol)
+      end)
+    end)
+    pcall(function()
+      withFont(ui.Font.Title, function()
+        local ts = measure(rightText)
+        ui.setCursor(p1 + vec2(math.max(10, w - ts.x - 10), (h - ts.y) / 2))
+        colText(rightText, textCol)
+      end)
+    end)
+
+    ui.setCursor(p1)
+    ui.dummy(vec2(w, h))
+  end)
+  if not drew then
+    colText(string.format('%-12s  %s', name, rightText), color)
+    fuelBar(fuelFrac or 0, 6, color)
+  end
 end
 
 -- ----------------------------------------------------------------------------
@@ -124,25 +210,31 @@ end
 -- Player table (driving + handover + results)
 -- ----------------------------------------------------------------------------
 
-local function drawStandings(showFuelBars)
+---Trackmania leaderboard: one coloured name-plate per player. When `showFuel`
+---is set the plate fill tracks live fuel; otherwise it's a full solid plate.
+local function drawStandings(showFuel)
   local s = game.state
-  local leader = game.leaderIndex()
-  for pos, e in ipairs(game.ranking()) do
+  local leaderIdx = game.leaderIndex()
+  local leaderBest = leaderIdx and s.players[leaderIdx].best or nil
+
+  for _, e in ipairs(game.ranking()) do
     local p, idx = e.p, e.index
-    local tag = idx == s.current and '▶' or (idx == leader and '👑' or ' ')
-    local color = idx == s.current and COL_CURRENT or (idx == leader and COL_GOLD or nil)
-    local line = string.format('%s %d. %-12s %s', tag, pos, p.nick, fmtLap(p.best))
-    if color then colText(line, color) else ui.text(line) end
-    if showFuelBars then fuelBar(p.fuel / p.fuelMax, 6) end
+    nameplate(p.nick,
+      showFuel and (p.fuel / p.fuelMax) or 1,
+      playerColor(idx),
+      fmtGap(p.best, leaderBest),
+      { active = idx == s.current, marker = idx == leaderIdx and '👑' or nil })
   end
+
   local anyDead = false
-  for _, p in ipairs(s.players) do
+  for idx, p in ipairs(s.players) do
     if p.eliminated then
       if not anyDead then
         anyDead = true
         ui.separator()
       end
-      colText(string.format('✖ %-12s %s', p.nick, fmtLap(p.best)), COL_DEAD)
+      nameplate(p.nick, 0, playerColor(idx), fmtGap(p.best, leaderBest),
+        { dead = true, marker = '✖' })
     end
   end
 end
@@ -158,7 +250,7 @@ local function drawHandover()
   hugeText(p.nick)
   ui.separator()
   ui.text('Fuel remaining: ' .. fmtFuel(p.fuel))
-  fuelBar(p.fuel / p.fuelMax)
+  fuelBar(p.fuel / p.fuelMax, nil, playerColor(s.current))
   if s.mode == game.MODE_OPENING then
     ui.text('Goal: set one valid lap.')
   else
@@ -186,7 +278,7 @@ local function drawDriving()
   bigText(p.nick)
 
   ui.text('Fuel  ' .. fmtFuel(p.fuel))
-  fuelBar(p.fuel / p.fuelMax)
+  fuelBar(p.fuel / p.fuelMax, nil, playerColor(s.current))
 
   if s.mode == game.MODE_ELIMINATION then
     local above = game.playerAbove(s.current)
