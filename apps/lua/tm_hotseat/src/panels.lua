@@ -271,14 +271,39 @@ end
 -- Driving HUD
 -- ----------------------------------------------------------------------------
 
+---Big, hard-to-miss red banner shown while the current lap is voided.
+local function invalidBanner()
+  local w = fullWidth()
+  local h = 36
+  local ok = pcall(function()
+    local p1 = ui.getCursor()
+    ui.drawRectFilled(p1, p1 + vec2(w, h), COL_FUEL_LOW, 4)
+    withFont(ui.Font.Title, function()
+      local label = 'LAP INVALID — CUT'
+      local ts = measure(label)
+      ui.setCursor(p1 + vec2((w - ts.x) / 2, (h - ts.y) / 2))
+      colText(label, rgbm(1, 1, 1, 1))
+    end)
+    ui.setCursor(p1)
+    ui.dummy(vec2(w, h))
+  end)
+  if not ok then
+    withFont(ui.Font.Title, function() colText('LAP INVALID — CUT', COL_FUEL_LOW) end)
+  end
+  colText('Restart or cross the line to reset.', COL_DIM)
+end
+
 local function drawDriving()
   local s = game.state
-  local p = s.players[s.current]
-  colText('NOW DRIVING', COL_DIM)
-  bigText(p.nick)
 
-  ui.text('Fuel  ' .. fmtFuel(p.fuel))
-  fuelBar(p.fuel / p.fuelMax, nil, playerColor(s.current))
+  -- Trackmania driving view: nothing but the leaderboard bars. The current
+  -- driver's own bar shows their fuel draining, so no separate fuel readout.
+  if s.lapInvalid then
+    invalidBanner()
+    ui.separator()
+  end
+
+  drawStandings(true)
 
   if s.mode == game.MODE_ELIMINATION then
     local above = game.playerAbove(s.current)
@@ -286,21 +311,15 @@ local function drawDriving()
       local target = s.players[above]
       colText('Beat ' .. target.nick .. ':  ' .. fmtLap(target.best), COL_FUEL_LOW)
     end
-  else
-    ui.text('Set one valid lap to bank your fuel.')
   end
-  if p.best then ui.text('Your best:  ' .. fmtLap(p.best)) end
-  if s.lapInvalid then colText('LAP INVALID — cut track. Restart or cross the line.', COL_FUEL_LOW) end
   if s.message then colText(s.message, COL_GOLD) end
 
-  if wideButton('RESTART LAP (fuel keeps draining)', 32) then game.requestRestart() end
+  ui.separator()
+  if wideButton('RESTART LAP', 32) then game.requestRestart() end
   -- Optional hotkey; signature varies between CSP builds, hence the guard.
   pcall(function()
     if ui.keyboardButtonPressed(ui.KeyIndex.R) then game.requestRestart() end
   end)
-
-  ui.separator()
-  drawStandings(true)
 
   local targets = game.getGhostTargets()
   if #targets > 0 then
