@@ -15,8 +15,14 @@
 
 local ghosts = require('src/ghosts')
 local nicknames = require('src/nicknames')
+local sound = require('src/sound')
 
 local M = {}
+
+-- Forward declaration: requestRestart (below) needs to trigger a fuel-out when
+-- the player restarts during their last-chance overtime, but onFuelOut is
+-- defined later alongside the other lap-result handlers.
+local onFuelOut
 
 M.PHASE_SETUP, M.PHASE_HANDOVER, M.PHASE_DRIVING, M.PHASE_OVER = 'setup', 'handover', 'driving', 'over'
 M.MODE_OPENING, M.MODE_ELIMINATION = 'opening', 'elimination'
@@ -48,6 +54,7 @@ M.state = {
   lapDirty = false,  -- teleported/restarted mid-lap: next completed lap doesn't count
   cutTimer = 0,
   lastLapTimeMs = nil,  -- previous frame's running lap timer, to spot external restarts
+  overtime = false,     -- fuel ran out mid-turn: last-chance lap, restart to forfeit
 }
 
 -- ----------------------------------------------------------------------------
@@ -204,7 +211,9 @@ function M.beginHandover(playerIndex)
   local s = M.state
   s.phase = M.PHASE_HANDOVER
   s.current = playerIndex
+  s.overtime = false
   ghosts.abortRecording()
+  sound.next()
   M.save()
 end
 
@@ -222,6 +231,7 @@ function M.confirmHandover()
   s.lapDirty = true
   s.cutTimer = 0
   s.lastLapTimeMs = nil
+  s.overtime = false
   ghosts.abortRecording()
   M.save()
 end
@@ -237,9 +247,14 @@ function M.armCleanLap()
 end
 
 ---Restart button: back to the hotlap start, fuel keeps its level (and keeps
----draining) — exactly like Trackmania.
+---draining) — exactly like Trackmania. Restarting during overtime (fuel already
+---gone) means giving up the last-chance lap, so the wheel passes on instead.
 function M.requestRestart()
   if M.state.phase ~= M.PHASE_DRIVING then return end
+  if M.state.overtime then
+    onFuelOut()
+    return
+  end
   M.teleportToStart()
   M.armCleanLap()
 end
@@ -325,11 +340,13 @@ local function onValidLap(lapMs)
   end
 end
 
-local function onFuelOut()
+-- Assigned to the local forward-declared near the top of the file.
+function onFuelOut()
   local s = M.state
   local p = s.players[s.current]
   p.eliminated = true
   p.fuel = 0
+  s.overtime = false
   ghosts.abortRecording()
   if finishGameIfDecided() then return end
   if s.mode == M.MODE_OPENING then
@@ -360,13 +377,16 @@ function M.update(dt)
     paused = sm.isPaused or sm.isReplayActive
   end)
 
-  -- Fuel drains for the whole turn, restarts included.
-  if not paused then
+  -- Fuel drains for the whole turn, restarts included. Running dry doesn't end
+  -- the turn immediately: the driver gets a last-chance "overtime" to finish the
+  -- lap they're on. They only pass the wheel by setting a valid lap (survive) or
+  -- restarting (forfeit — handled in requestRestart).
+  if not paused and not s.overtime then
     local p = s.players[s.current]
     p.fuel = p.fuel - dt
     if p.fuel <= 0 then
-      onFuelOut()
-      return
+      p.fuel = 0
+      s.overtime = true
     end
   end
 
@@ -391,7 +411,10 @@ function M.update(dt)
   local wheelsOut = car.wheelsOutside or 0
   if wheelsOut > M.cfg.maxWheelsOutside then
     s.cutTimer = s.cutTimer + dt
-    if s.cutTimer > M.cfg.cutGraceS then s.lapInvalid = true end
+    if s.cutTimer > M.cfg.cutGraceS and not s.lapInvalid then
+      s.lapInvalid = true
+      sound.invalid()  -- ding once, on the transition to invalid
+    end
   else
     s.cutTimer = 0
   end

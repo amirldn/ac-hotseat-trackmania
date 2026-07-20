@@ -21,11 +21,17 @@ Built as a **CSP Lua app** (requires [Custom Shaders Patch](https://acstuff.club
    your fuel drain pauses and the wheel passes to the next player.
 3. **Elimination** — once everyone has a time, the **worst-ranked player drives** and must
    beat the time of the player directly above them. Beat it and the wheel passes to the
-   player you just demoted (they're last now). Run dry and you're **eliminated**. Last
-   player standing wins.
-4. **Ghosts** — while driving you see up to two ghosts replaying in real time against your
+   player you just demoted (they're last now). Last player standing wins.
+4. **Last chance (overtime)** — running out of fuel doesn't end your turn on the spot: you
+   get a **last-chance lap** to finish the one you're on. Set a valid lap and you survive;
+   **restart while out of fuel and you forfeit** — the wheel passes on (and in elimination
+   that means you're out). An amber banner shows while you're in overtime.
+5. **Ghosts** — while driving you see up to two ghosts replaying in real time against your
    lap clock: 👑 the overall leader's best lap and ▲ the best lap of the player directly
    above you. Ghosts are visual only (no collisions).
+
+Sound cues play a **low buzz** when you void a lap (cut) and a **bright chime** when the
+wheel passes to the next player.
 
 The app window (dock it top-left) always shows every player's fuel bar, best lap and
 live standings, plus the target time you need to beat.
@@ -64,11 +70,13 @@ live standings, plus the target time you need to beat.
 apps/lua/tm_hotseat/
 ├── manifest.ini        CSP app manifest (window + render callback)
 ├── tm_hotseat.lua      entry point, wires CSP callbacks
-└── src/
-    ├── game.lua        fuel, turns, opening/elimination state machine
-    ├── ghosts.lua      best-lap recording, KN5 ghost playback
-    ├── nicknames.lua   random noun nickname categories
-    └── panels.lua      setup / handover / driving / results UI
+├── src/
+│   ├── game.lua        fuel, turns, opening/elimination state machine
+│   ├── ghosts.lua      best-lap recording, KN5 ghost playback
+│   ├── nicknames.lua   random noun nickname categories
+│   ├── panels.lua      setup / handover / driving / results UI
+│   └── sound.lua       2D sound cues (cut buzz, next-player chime)
+└── sfx/                invalid.wav, next.wav
 tests/
 └── test_game.lua       headless smoke test of the state machine
 ```

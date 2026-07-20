@@ -114,17 +114,24 @@ check(game.state.phase == game.PHASE_DRIVING and game.state.current == 1, 'still
 completeLap(54000)
 check(game.state.phase == game.PHASE_HANDOVER and game.state.current == 3, 'beaten player takes the wheel')
 
--- P3 runs out of fuel -> eliminated; p1 (now worst of remaining) drives.
+-- P3 runs out of fuel -> last-chance overtime (keeps driving, not eliminated).
 game.state.players[3].fuel = 0.05
 game.confirmHandover()
 tick(0.2)
-check(game.state.players[3].eliminated, 'fuel out eliminates p3')
+check(game.state.overtime and game.state.phase == game.PHASE_DRIVING and game.state.current == 3,
+  'fuel out gives p3 an overtime last chance')
+check(not game.state.players[3].eliminated, 'overtime does not eliminate immediately')
+-- Restarting during overtime forfeits it -> p3 eliminated, p1 (worst left) drives.
+game.requestRestart()
+check(game.state.players[3].eliminated, 'restart during overtime eliminates p3')
 check(game.state.phase == game.PHASE_HANDOVER and game.state.current == 1, 'remaining worst (p1) drives next')
 
--- P1 runs out of fuel -> only p2 remains -> game over, p2 wins.
+-- P1 runs out of fuel, forfeits overtime -> only p2 remains -> game over, p2 wins.
 game.state.players[1].fuel = 0.05
 game.confirmHandover()
 tick(0.2)
+check(game.state.overtime, 'p1 enters overtime')
+game.requestRestart()
 check(game.state.phase == game.PHASE_OVER, 'game over when one player remains')
 local winner
 for _, p in ipairs(game.state.players) do if not p.eliminated then winner = p end end
@@ -143,6 +150,20 @@ check(game.state.phase == game.PHASE_DRIVING and game.state.players[game.state.c
 crossStartLine()
 completeLap(45000)
 check(game.state.phase == game.PHASE_HANDOVER, 'clean lap after restart counts')
+
+-- Overtime survival: run dry mid-lap, then a valid lap still banks and passes on.
+game.resetGame()
+game.setup.playerCount = 2
+game.setup.fuelSeconds = 100
+game.startGame()
+local cur = game.state.current
+game.confirmHandover(); crossStartLine()
+game.state.players[cur].fuel = 0.05
+tick(0.2)
+check(game.state.overtime and game.state.phase == game.PHASE_DRIVING, 'fuel out enters overtime, still driving')
+completeLap(48000)
+check(game.state.players[cur].best == 48000, 'valid lap during overtime still banks')
+check(game.state.phase == game.PHASE_HANDOVER, 'overtime valid lap passes the wheel')
 
 print(failures == 0 and '\nALL TESTS PASSED' or ('\n' .. failures .. ' FAILURES'))
 os.exit(failures == 0 and 0 or 1)

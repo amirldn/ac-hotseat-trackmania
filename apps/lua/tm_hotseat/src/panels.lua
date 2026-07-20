@@ -271,15 +271,16 @@ end
 -- Driving HUD
 -- ----------------------------------------------------------------------------
 
----Big, hard-to-miss red banner shown while the current lap is voided.
-local function invalidBanner()
+local COL_OVERTIME = rgbm(0.96, 0.55, 0.13, 1) -- amber "last chance" banner
+
+---Big, hard-to-miss centred banner (used for cut-lap and overtime warnings).
+local function banner(label, bg, hint)
   local w = fullWidth()
   local h = 36
   local ok = pcall(function()
     local p1 = ui.getCursor()
-    ui.drawRectFilled(p1, p1 + vec2(w, h), COL_FUEL_LOW, 4)
+    ui.drawRectFilled(p1, p1 + vec2(w, h), bg, 4)
     withFont(ui.Font.Title, function()
-      local label = 'LAP INVALID — CUT'
       local ts = measure(label)
       ui.setCursor(p1 + vec2((w - ts.x) / 2, (h - ts.y) / 2))
       colText(label, rgbm(1, 1, 1, 1))
@@ -288,9 +289,9 @@ local function invalidBanner()
     ui.dummy(vec2(w, h))
   end)
   if not ok then
-    withFont(ui.Font.Title, function() colText('LAP INVALID — CUT', COL_FUEL_LOW) end)
+    withFont(ui.Font.Title, function() colText(label, bg) end)
   end
-  colText('Restart or cross the line to reset.', COL_DIM)
+  if hint then colText(hint, COL_DIM) end
 end
 
 local function drawDriving()
@@ -298,8 +299,12 @@ local function drawDriving()
 
   -- Trackmania driving view: nothing but the leaderboard bars. The current
   -- driver's own bar shows their fuel draining, so no separate fuel readout.
+  if s.overtime then
+    banner('⛽ LAST CHANCE — NO FUEL', COL_OVERTIME, 'Finish this lap or restart to forfeit.')
+    ui.separator()
+  end
   if s.lapInvalid then
-    invalidBanner()
+    banner('LAP INVALID — CUT', COL_FUEL_LOW, 'Restart or cross the line to reset.')
     ui.separator()
   end
 
