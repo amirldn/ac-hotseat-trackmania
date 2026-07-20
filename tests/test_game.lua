@@ -165,5 +165,23 @@ completeLap(48000)
 check(game.state.players[cur].best == 48000, 'valid lap during overtime still banks')
 check(game.state.phase == game.PHASE_HANDOVER, 'overtime valid lap passes the wheel')
 
+-- Overtime + external restart (pause-menu "restart session" / wheel button):
+-- the lap counter drops, which must forfeit the last chance just like the app's
+-- own Restart button does.
+game.resetGame()
+game.setup.playerCount = 3
+game.setup.fuelSeconds = 100
+game.startGame()
+local cur2 = game.state.current
+car.lapCount = 5
+game.confirmHandover(); crossStartLine()
+game.state.players[cur2].fuel = 0.05
+tick(0.2)
+check(game.state.overtime, 'overtime reached before external restart')
+car.lapCount = 0 -- session restart drops the lap counter
+tick()
+check(game.state.phase == game.PHASE_HANDOVER and game.state.current ~= cur2,
+  'external restart during overtime forfeits to the next player')
+
 print(failures == 0 and '\nALL TESTS PASSED' or ('\n' .. failures .. ' FAILURES'))
 os.exit(failures == 0 and 0 or 1)

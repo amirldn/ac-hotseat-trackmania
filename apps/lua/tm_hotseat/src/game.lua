@@ -401,6 +401,11 @@ function M.update(dt)
     local timerReset = s.lastLapTimeMs ~= nil and s.lastLapTimeMs > 3000
       and lapTimeMs < 1500 and car.lapCount <= s.lapBase
     if droppedLap or timerReset then
+      if s.overtime then
+        -- Restarting while out of fuel (by any method) forfeits the last chance.
+        onFuelOut()
+        return
+      end
       s.lapBase = car.lapCount
       M.armCleanLap()
     end
