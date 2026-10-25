@@ -1,7 +1,7 @@
 -- Trackmania-hotseat game logic.
 --
 -- Flow:
---   SETUP      pick player count, nickname category and fuel budget
+--   SETUP      pick player count and fuel budget (nicknames are random)
 --   OPENING    each player in (shuffled) order drives until they set one valid
 --              lap; fuel drains the whole time and restarting keeps the drain
 --   ELIMINATION the worst-ranked player drives and must beat the player ranked
@@ -16,6 +16,7 @@
 local ghosts = require('src/ghosts')
 local nicknames = require('src/nicknames')
 local sound = require('src/sound')
+local tm = require('src/tmui')
 
 local M = {}
 
@@ -43,7 +44,6 @@ M.clock = 0
 
 M.setup = {
   playerCount = 3,
-  categoryIndex = 1,
   fuelSeconds = nil, -- filled from track length on first UI draw
 }
 
@@ -160,14 +160,15 @@ function M.getGhostTargets()
   local s = M.state
   if s.phase ~= M.PHASE_DRIVING or s.current == nil then return {} end
   local out, used = {}, {}
-  local function add(idx, label, color)
+  -- Each ghost wears its player's leaderboard colour.
+  local function add(idx, label)
     if idx and not used[idx] and ghosts.recordings[idx] then
       used[idx] = true
-      out[#out + 1] = { rec = ghosts.recordings[idx], label = label .. ' ' .. s.players[idx].nick, color = color }
+      out[#out + 1] = { rec = ghosts.recordings[idx], label = label .. ' ' .. s.players[idx].nick, color = tm.playerColor(idx) }
     end
   end
-  add(M.leaderIndex(), '👑', rgbm(1, 0.85, 0.2, 1))
-  add(M.playerAbove(s.current), '▲', rgbm(0.4, 0.8, 1, 1))
+  add(M.leaderIndex(), '👑')
+  add(M.playerAbove(s.current), '▲')
   return out
 end
 
@@ -218,7 +219,7 @@ end
 function M.startGame()
   local s = M.state
   local count = M.setup.playerCount
-  local nicks = nicknames.pick(M.setup.categoryIndex, count)
+  local nicks = nicknames.pick(count)
   local fuel = M.setup.fuelSeconds or M.defaultFuelSeconds()
   s.players = {}
   for i = 1, count do
@@ -275,14 +276,16 @@ end
 ---Discard any in-progress lap and start fresh from the line: clear the cut
 ---flag, re-arm the clean-lap gate and drop the current ghost recording. Used by
 ---the Restart button and whenever an external restart is detected mid-turn.
-function M.armCleanLap()
+---`keepMessage` leaves the status line alone (e.g. "Go again!" across the
+---session restart that follows it).
+function M.armCleanLap(keepMessage)
   M.state.lapInvalid = false
   M.state.lapDirty = true
   M.state.cutTimer = 0
   M.state.lapDist = 0
   M.state.cpNext = 1
   M.state.split = nil
-  M.state.message = nil
+  if not keepMessage then M.state.message = nil end
   ghosts.abortRecording()
 end
 
@@ -379,7 +382,14 @@ local function onValidLap(lapMs)
       s.message = nil
       M.beginHandover(worst)
     else
-      s.message = improved and 'Improved — but still last. Keep pushing!' or 'Not enough. Keep pushing!'
+      -- Still last: back to the grid for another go, so the next attempt starts
+      -- from a standstill like everyone else's, not with a flying lap's speed.
+      -- Keep the finish split up so they can see how far off they were.
+      local finish = s.split
+      M.armCleanLap()
+      M.sendToStart()
+      s.split = finish
+      s.message = improved and 'Improved — but still last. Go again!' or 'Not enough. Go again!'
       M.save()
     end
   end
@@ -503,7 +513,9 @@ function M.update(dt)
         return
       end
       s.lapBase = car.lapCount
-      M.armCleanLap()
+      -- The app's own restarts already cleared stale messages and may have set
+      -- a fresh one ("Go again!") that must survive the reload.
+      M.armCleanLap(true)
     end
   end
   s.lastLapTimeMs = lapTimeMs

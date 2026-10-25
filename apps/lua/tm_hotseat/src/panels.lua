@@ -1,9 +1,8 @@
 -- UI for the main window: setup, handover, driving controls and results.
--- With the fullscreen Trackmania HUD on (default) this window is just the
--- control panel; with it off, the window shows the classic in-window standings.
+-- The fullscreen Trackmania HUD shows the race, so this window is just the
+-- control panel; if the HUD fails to draw it falls back to in-window standings.
 
 local game = require('src/game')
-local nicknames = require('src/nicknames')
 local fmt = require('src/fmt')
 local tm = require('src/tmui')
 local settings = require('src/settings')
@@ -11,6 +10,10 @@ local controls = require('src/controls')
 local overlay = require('src/overlay')
 
 local M = {}
+
+-- The Trackmania HUD is always on; the in-window standings only come back if
+-- the overlay fails to draw on this CSP build.
+local function hudOn() return overlay.lastError == nil end
 
 local COL_FUEL_OK = rgbm(0.3, 0.85, 0.4, 1)
 local COL_FUEL_LOW = rgbm(0.95, 0.35, 0.2, 1)
@@ -151,14 +154,6 @@ local function drawSetup()
     game.setup.playerCount = game.setup.playerCount + 1
   end
 
-  ui.separator()
-  ui.text('Nickname category')
-  for i, cat in ipairs(nicknames.categories) do
-    local marker = i == game.setup.categoryIndex and '● ' or '○ '
-    if ui.button(marker .. cat.name .. '##cat' .. i) then
-      game.setup.categoryIndex = i
-    end
-  end
 
   ui.separator()
   ui.text(string.format('Fuel per player (track: %.1f km)', game.trackLengthKm()))
@@ -176,26 +171,24 @@ local function drawSetup()
 
   ui.separator()
   ui.text('Display')
-  if ui.checkbox('Trackmania HUD (fullscreen overlay)', settings.hudOverlay) then
-    settings.hudOverlay = not settings.hudOverlay
-  end
-  if settings.hudOverlay then
-    if ui.button('-##scale') then settings.hudScale = math.max(0.6, settings.hudScale - 0.1) end
-    ui.sameLine()
-    ui.text(string.format('  HUD size %d%%  ', math.floor(settings.hudScale * 100 + 0.5)))
-    ui.sameLine()
-    if ui.button('+##scale') then settings.hudScale = math.min(2.0, settings.hudScale + 0.1) end
-  end
+  if ui.button('-##scale') then settings.hudScale = math.max(0.6, settings.hudScale - 0.1) end
+  ui.sameLine()
+  ui.text(string.format('  HUD size %d%%  ', math.floor(settings.hudScale * 100 + 0.5)))
+  ui.sameLine()
+  if ui.button('+##scale') then settings.hudScale = math.min(2.0, settings.hudScale + 0.1) end
 
   ui.separator()
   ui.text('Controls (keyboard, wheel or pad)')
   controls.drawBinding('GO / Restart', controls.action)
-  if controls.bound() and settings.hudOverlay then
-    colText('This window hides while driving; reopen it from the taskbar.', COL_DIM)
-  end
 
   ui.separator()
-  if wideButton('START GAME', 44) then game.startGame() end
+  -- Drivers start turns and restart with the bound button, so it's required.
+  if controls.bound() then
+    colText('This window hides while driving; reopen it from the taskbar.', COL_DIM)
+    if wideButton('START GAME', 44) then game.startGame() end
+  else
+    colText('Bind GO / Restart above to start a game.', COL_FUEL_LOW)
+  end
 end
 
 -- ----------------------------------------------------------------------------
@@ -255,7 +248,7 @@ local function drawHandover()
   end
   ui.separator()
   if wideButton('GO — I AM READY', 48) then game.confirmHandover() end
-  if not settings.hudOverlay then
+  if not hudOn() then
     ui.separator()
     drawStandings(false)
   end
@@ -310,7 +303,7 @@ end
 
 local function drawDriving()
   local s = game.state
-  if settings.hudOverlay then
+  if hudOn() then
     drawDrivingCompact()
     return
   end
@@ -361,7 +354,7 @@ local function drawOver()
   colText('WINNER', COL_GOLD)
   hugeText(winner and winner.nick or '—')
   if winner and winner.best then bigText(fmtLap(winner.best)) end
-  if not settings.hudOverlay then
+  if not hudOn() then
     ui.separator()
     drawStandings(false)
   end
@@ -379,7 +372,7 @@ local function setWindowOpen(open)
   return pcall(ac.setWindowOpen, 'main', open)
 end
 
----With the fullscreen HUD on and a button bound, the window isn't needed while
+---With the fullscreen HUD working and a button bound, the window isn't needed while
 ---driving, so it closes then and reopens between turns (handover, results, setup)
 ---where GO and Abandon live. Only acts on phase changes, so the player can still
 ---reopen it from the taskbar mid-turn.
@@ -390,7 +383,7 @@ function M.autoHideWindow()
   lastPhase = phase
   -- On app load, leave the window as the player left it.
   if first then return end
-  local needed = phase ~= game.PHASE_DRIVING or not settings.hudOverlay or not controls.bound()
+  local needed = phase ~= game.PHASE_DRIVING or not hudOn() or not controls.bound()
   if needed then
     if hiddenByUs and setWindowOpen(true) then hiddenByUs = false end
   elseif setWindowOpen(false) then
@@ -410,9 +403,9 @@ function M.drawMain(dt)
     drawOver()
   end
 
-  if settings.hudOverlay and overlay.lastError then
+  if overlay.lastError then
     ui.separator()
-    colText('HUD error (untick the Trackmania HUD in setup to fall back):', COL_FUEL_LOW)
+    colText('HUD error (showing standings here instead):', COL_FUEL_LOW)
     pcall(ui.textWrapped, overlay.lastError)
   end
 

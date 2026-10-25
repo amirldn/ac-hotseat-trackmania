@@ -16,6 +16,7 @@ local M = {}
 local SAMPLE_INTERVAL = 1 / 20   -- seconds between samples
 local MAX_SAMPLES = 20 * 60 * 20 -- cap: 20 minutes of lap time per recording
 local STRIDE = 11                -- numbers per sample: time, pos xyz, look xyz, up xyz, spline progress
+local HIDE_NEAR_M = 6            -- ghost car hides while this close to the driver's car (name stays)
 
 -- Wired up by tm_hotseat.lua to avoid a require cycle with game.lua.
 -- Must return an array of { rec = recording, label = string, color = rgbm }.
@@ -81,33 +82,60 @@ end
 -- ----------------------------------------------------------------------------
 
 local slots = {}          -- up to 2 reusable ghost nodes: { node, loaded, failed }
-local modelPath = nil
-local modelPathResolved = false
+local model = nil
+local modelResolved = false
 
-local function resolveCarModelPath()
-  if modelPathResolved then return modelPath end
-  modelPathResolved = true
+---Candidate models for the player's car, best first, as { file, main }: LOD
+---KN5s carry no textures, so `main` names the LOD_0 file they borrow them from.
+---Car folders don't always match their KN5 names (nohesi_bmw_e90 ships
+---bmw_m3_e92_cs.kn5), and lods.ini is usually packed in data.acd, so read it
+---through carData and fall back to whatever KN5 files the folder holds.
+function M.modelCandidates(carDir, carId)
+  local candidates = {}
+  local function addLods(ini)
+    if ini == nil then return end
+    local main = ini:get('LOD_0', 'FILE', '')
+    if main == '' then return end
+    main = carDir .. '/' .. main
+    -- Prefer a mid LOD: cheaper than LOD_0, still recognisable up close.
+    local lod1 = ini:get('LOD_1', 'FILE', '')
+    if lod1 ~= '' then candidates[#candidates + 1] = { file = carDir .. '/' .. lod1, main = main } end
+    candidates[#candidates + 1] = { file = main }
+  end
+  local ok, ini = pcall(ac.INIConfig.carData, 0, 'lods.ini')
+  if ok then pcall(addLods, ini) end
+  ok, ini = pcall(ac.INIConfig.load, carDir .. '/lods.ini')
+  if ok then pcall(addLods, ini) end
+  candidates[#candidates + 1] = { file = carDir .. '/' .. carId .. '.kn5' }
+  local listed, files = pcall(io.scanDir, carDir, '*.kn5')
+  if listed and type(files) == 'table' then
+    -- Main model (shortest name; LODs and the collision mesh can't be shown alone).
+    table.sort(files, function(a, b) return #a < #b end)
+    for _, f in ipairs(files) do
+      local lower = f:lower()
+      if not lower:find('collider', 1, true) and not lower:find('_lod', 1, true) then
+        candidates[#candidates + 1] = { file = carDir .. '/' .. f }
+        break
+      end
+    end
+  end
+  return candidates
+end
+
+local function resolveCarModel()
+  if modelResolved then return model end
+  modelResolved = true
   pcall(function()
     local carId = ac.getCarID(0)
     local carDir = ac.getFolder(ac.FolderID.ContentCars) .. '/' .. carId
-    local candidates = {}
-    local ok, ini = pcall(ac.INIConfig.load, carDir .. '/lods.ini')
-    if ok and ini then
-      -- Prefer a mid LOD: cheaper than LOD_0, still recognisable up close.
-      for _, section in ipairs({ 'LOD_1', 'LOD_0', 'LOD_2' }) do
-        local file = ini:get(section, 'FILE', '')
-        if file ~= '' then candidates[#candidates + 1] = carDir .. '/' .. file end
-      end
-    end
-    candidates[#candidates + 1] = carDir .. '/' .. carId .. '.kn5'
-    for _, path in ipairs(candidates) do
-      if io.fileExists(path) then
-        modelPath = path
+    for _, c in ipairs(M.modelCandidates(carDir, carId)) do
+      if io.fileExists(c.file) and (c.main == nil or io.fileExists(c.main)) then
+        model = c
         return
       end
     end
   end)
-  return modelPath
+  return model
 end
 
 local function ensureSlot(i)
@@ -118,20 +146,41 @@ local function ensureSlot(i)
   local ok = pcall(function()
     local root = ac.findNodes('trackRoot:yes')
     slot.node = root:createNode('tm_hotseat_ghost_' .. i, true)
-    local path = resolveCarModelPath()
-    if path == nil then error('car model not found') end
-    slot.node:loadKN5Async(path, function(err, loaded)
+    local m = resolveCarModel()
+    if m == nil then error('car model not found') end
+    local function onLoaded(err, loaded)
       if err or loaded == nil then
         slot.failed = true
         return
       end
       slot.loaded = true
+      -- Material calls only reach meshes, not the node returned by the load
+      -- (CSP's traffic tool does the same: findMeshes, then recolour).
+      pcall(function() slot.meshes = loaded:findMeshes('?') end)
+      local meshes = slot.meshes or loaded
+      -- Own materials, so tinting one ghost doesn't repaint the other.
+      pcall(function() meshes:ensureUniqueMaterials() end)
       -- Best effort ghost look; harmless if unsupported on this CSP build.
-      pcall(function() loaded:setTransparent(true) end)
-    end)
+      pcall(function() meshes:setTransparent(true) end)
+    end
+    if m.main then
+      slot.node:loadKN5LODAsync(m.file, m.main, onLoaded)
+    else
+      slot.node:loadKN5Async(m.file, onLoaded)
+    end
   end)
   if not ok then slot.failed = true end
   return slot
+end
+
+---Paints the ghost one flat colour. A loose KN5 doesn't get the car's CSP
+---config (paint, PBR shader swaps), so real paint comes out pink/orange on mod
+---cars; a solid player colour reads as a Trackmania ghost on any car.
+local function tintSlot(slot, color)
+  if slot.meshes == nil or color == nil or slot.tint == color then return end
+  slot.tint = color
+  pcall(function() slot.meshes:setMaterialTexture('txDiffuse', color) end)
+  pcall(function() slot.meshes:setMaterialTexture('txDetail', rgbm(1, 1, 1, 1)) end)
 end
 
 local function hideSlot(i)
@@ -225,10 +274,15 @@ function M.update(dt, drivingActive, waitingForLine)
       if pos ~= nil then
         local slot = ensureSlot(i)
         if slot.loaded and slot.node then
+          tintSlot(slot, target.color)
+          -- Like Trackmania, the ghost car gets out of the way while it overlaps
+          -- yours; its name tag stays so you still know where it is.
+          local cp = car.position
+          local near = cp ~= nil and (pos.x - cp.x) ^ 2 + (pos.y - cp.y) ^ 2 + (pos.z - cp.z) ^ 2 < HIDE_NEAR_M ^ 2
           local ok = pcall(function()
             slot.node:setPosition(pos)
             slot.node:setOrientation(look, up)
-            slot.node:setVisible(true)
+            slot.node:setVisible(not near)
           end)
           shown = ok
           slot.active = shown and { pos = pos:clone(), label = target.label, color = target.color } or nil

@@ -15,9 +15,9 @@ Built as a **CSP Lua app** (requires [Custom Shaders Patch](https://acstuff.club
 
 ## How it plays
 
-1. **Setup** — pick the number of players (2–8), a nickname category (Animals, Fruit & Veg,
-   Space, Workshop, Mythical) and the fuel budget. Everyone is assigned a random unique noun
-   as their nickname. The default fuel budget scales with track length (longer track = more
+1. **Setup** — pick the number of players (2–8) and the fuel budget, and bind the
+   **GO / Restart** button (required to start). Everyone gets a random unique noun as their
+   nickname, all from one random category (Animals, Fruit & Veg, Space, Workshop, Mythical). The default fuel budget scales with track length (longer track = more
    fuel) and can be tweaked in 30-second steps.
 2. **Opening round** — players drive one at a time in a shuffled order. Your **fuel is a
    personal time budget**: it drains for every second of your turn and is *not* the car's
@@ -28,14 +28,17 @@ Built as a **CSP Lua app** (requires [Custom Shaders Patch](https://acstuff.club
    your fuel drain pauses and the wheel passes to the next player.
 3. **Elimination** — once everyone has a time, the **worst-ranked player drives** and must
    beat the time of the player directly above them. Beat it and the wheel passes to the
-   player you just demoted (they're last now). Last player standing wins.
+   player you just demoted (they're last now). Finish a lap that doesn't beat it and you're
+   sent back to the grid for another standing-start attempt, so nobody gets a flying start
+   the next player wouldn't. Last player standing wins.
 4. **Last chance (overtime)** — running out of fuel doesn't end your turn on the spot: you
    get a **last-chance lap** to finish the one you're on. Set a valid lap and you survive;
    **restart while out of fuel and you forfeit** — the wheel passes on (and in elimination
    that means you're out). An amber banner shows while you're in overtime.
 5. **Ghosts** — while driving you see up to two ghosts replaying in real time against your
    lap clock: 👑 the overall leader's best lap and ▲ the best lap of the player directly
-   above you. Ghosts are visual only (no collisions) and wait on the line until you cross it.
+   above you. Each ghost is painted its player's leaderboard colour, is visual only (no
+   collisions), waits on the line until you cross it, and hides while it overlaps your car.
 6. **Checkpoints** — the lap is split into 3–10 checkpoints (by track length). Crossing one
    flashes your split against the time you're chasing: **blue** = ahead, **red** = behind.
 
@@ -59,10 +62,9 @@ The HUD is drawn fullscreen, with no window chrome:
 - **Banners** — LAP INVALID, LAST CHANCE, and a full-screen "pass the wheel to …" card
   between turns, then the winner card.
 
-The app window becomes a small control panel (GO / Restart / settings). Once *GO / Restart*
-is bound it hides itself while someone is driving and reopens between turns; you can reopen it
-from the taskbar at any time — the game keeps running and your bound button still works.
-Untick **Trackmania HUD** in setup to go back to the classic in-window standings.
+The app window becomes a small control panel (GO / Restart / settings). It hides itself
+while someone is driving and reopens between turns; you can reopen it from the taskbar at
+any time — the game keeps running and your bound button still works.
 
 ## Installation
 
@@ -72,7 +74,7 @@ Untick **Trackmania HUD** in setup to go back to the classic in-window standings
 ### Quick install (recommended)
 
 1. Download **Source code (zip)** from the
-   [v1.0.0 release](https://github.com/amirldn/ac-hotseat-trackmania/releases/tag/1.0.0).
+   [v2.0.0 release](https://github.com/amirldn/ac-hotseat-trackmania/releases/tag/2.0.0).
 2. **Drag the zip straight into Content Manager** — it detects the `apps/lua/tm_hotseat`
    folder inside and installs it for you. Done.
 3. Start any **single-player Practice or Hotlap session** (one car, any track), then open
@@ -92,12 +94,12 @@ Untick **Trackmania HUD** in setup to go back to the classic in-window standings
 
 ## Notes & troubleshooting
 
-- **HUD not showing / looks wrong**: untick *Trackmania HUD* in the setup screen to fall
-  back to in-window standings; any HUD error is printed in the app window. *HUD size*
+- **HUD not showing / looks wrong**: the HUD is always on; if it fails to draw on your CSP
+  build, the app window prints the error and shows the standings itself instead. *HUD size*
   scales it on top of automatic resolution scaling.
 - **Controls**: the setup screen has one CSP binding widget, *GO / Restart* — click it, then
-  press a key or wheel/pad button. It starts your turn on the handover screen and restarts
-  the lap while driving. With it bound and the Trackmania HUD on, the app window hides
+  press a key or wheel/pad button. *START GAME* only appears once it's bound. It starts your
+  turn on the handover screen and restarts the lap while driving. The app window hides
   itself while driving (reopen it from the taskbar) and comes back between turns.
 - **Restart**: GO and Restart restart the AC session, exactly like *Restart session* in
   the pause menu: you land on the session's spawn (the grid in Practice) and the lap clock
@@ -109,8 +111,9 @@ Untick **Trackmania HUD** in setup to go back to the classic in-window standings
   grace period for kerb hops), if you teleported mid-lap, or if it covered less than 60%
   of the track length (an out-lap from the spawn point). Set AC's own penalties off —
   the app does its own checking.
-- **Ghost model**: ghosts load your car's KN5 (preferring a lighter LOD from `lods.ini`).
-  If the model can't be loaded on your build, a marker cross with the player's name is
+- **Ghost model**: ghosts load your car's KN5 (preferring a lighter LOD from `lods.ini`,
+  read from `data.acd` too) and paint it one flat colour — the car's own paint depends on
+  its CSP config, which a loose model doesn't get, so mod cars came out pink. If the model can't be loaded on your build, a marker cross with the player's name is
   drawn at the ghost position instead.
 - **One car only**: run the session with just the player car; the app reads car slot 0.
 
@@ -129,7 +132,7 @@ apps/lua/tm_hotseat/
 │   ├── controls.lua    bindable GO / Restart button
 │   ├── settings.lua    persisted display settings
 │   ├── fmt.lua         time formatting
-│   ├── nicknames.lua   random noun nickname categories
+│   ├── nicknames.lua   random noun nicknames (one random category per game)
 │   └── sound.lua       2D sound cues (cut buzz, next-player chime)
 └── sfx/                invalid.wav, next.wav
 tests/

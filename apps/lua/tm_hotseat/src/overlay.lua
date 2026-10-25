@@ -262,7 +262,6 @@ local function draw()
 end
 
 function M.draw()
-  if not settings.hudOverlay then return end
   local ok, err = pcall(draw)
   M.lastError = (not ok) and tostring(err) or nil
 end

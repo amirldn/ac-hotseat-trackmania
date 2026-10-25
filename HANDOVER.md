@@ -30,18 +30,25 @@ Branch: `claude/trackmania-hotseat-ac-mod-jpoeo9` (based on
   leaderboard with fuel-draining player plates, bottom-centre lap clock, **checkpoint
   splits** (blue ahead / red behind, vs the time you're chasing), fuel gauge, LAP
   INVALID / LAST CHANCE banners, full-screen handover card and winner card. Scales with
-  resolution; *HUD size* setting on top. Toggle off to get the old in-window standings.
+  resolution; *HUD size* setting on top. Always on (no toggle); the in-window standings
+  only return automatically if the overlay errors.
 - **Bindable control** (`src/controls.lua`): one *GO / Restart* button via CSP's binding
   widget in the setup screen — GO on handover, restart while driving; works with wheel
   buttons. With it bound and the HUD on, the app window hides itself while driving.
 - Tests: 45 assertions in `tests/test_game.lua` (out-lap guard, session restart,
   splits, periodic save, …) plus `tests/test_panels.lua`; preview tool in `tools/`.
 
+## In-game results (2026-10-25, CSP 0.3.0-preview542, Anglesey, released as 2.0.0)
+
+Passed: HUD loads (1), restart/out-lap (3, 4, after switching to session restarts),
+checkpoint splits (5), ghosts (6, after the LOD/texture and flat-colour fixes), HUD
+size (9). Not checked yet: font/shapes (2), bound button from a wheel (7). Skipped:
+fuel save across an AC restart (8).
+
 ## In-game checklist (riskiest first)
 
 1. **App loads and the overlay draws** top-left with no window chrome. If not, the app
-   window shows a "HUD error" line, and the CSP log has details. Untick *Trackmania HUD*
-   to confirm the fallback works.
+   window shows a "HUD error" line and in-window standings, and the CSP log has details.
 2. **Font and shapes**: is `Segoe UI` Black Italic rendering, and do the slanted slabs
    fill cleanly? (DirectWrite fonts and `ui.pathFillConvex` in the IN_GAME callback.)
 3. **Restart**: GO/Restart restart the session (grid, just behind the line) and the
@@ -64,5 +71,4 @@ Branch: `claude/trackmania-hotseat-ac-mod-jpoeo9` (based on
 - Translucent ghosts: `loaded:setTransparent(true)` is best-effort; verify how it looks.
 - Bundle a Trackmania-like font in the app folder (`ui.DWriteFont('Name', './fonts')`).
 - A 3-2-1 countdown after GO.
-- Publish a new release zip: the README's quick install still links the v1.0.0 release,
-  which doesn't include this work.
+- ~~Publish a new release zip~~: done as 2.0.0 (README links it).

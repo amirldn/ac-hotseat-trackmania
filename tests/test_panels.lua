@@ -26,13 +26,16 @@ local game = require('src/game')
 local panels = require('src/panels')
 local settings = require('src/settings')
 require('src/controls').init(function() end)
+local overlay = require('src/overlay')
 local function drawAll(label)
+  -- [classic] is the in-window fallback used when the overlay fails to draw.
   for _, overlayOn in ipairs({ true, false }) do
-    settings.hudOverlay = overlayOn
+    overlay.lastError = not overlayOn and 'boom' or nil
     local ok, err = pcall(panels.drawMain, 0.016)
     if not ok then failures = failures + 1 end
     print((ok and 'PASS ' or 'FAIL ') .. label .. (overlayOn and ' [overlay]' or ' [classic]') .. (ok and '' or (': ' .. tostring(err))))
   end
+  overlay.lastError = nil
 end
 drawAll('setup')
 game.setup.playerCount = 3; game.startGame(); drawAll('handover')
@@ -41,12 +44,22 @@ game.state.overtime, game.state.lapInvalid, game.state.message = true, true, 'he
 for _, p in ipairs(game.state.players) do p.eliminated = true end
 game.state.players[1].eliminated = false; game.state.players[1].best = 90000; game.state.phase = game.PHASE_OVER; drawAll('over')
 
--- Window auto-hide: only with the HUD on and a button bound, only on phase changes.
 local function check(name, cond)
   if not cond then failures = failures + 1 end
   print((cond and 'PASS ' or 'FAIL ') .. name)
 end
-game.resetGame(); settings.hudOverlay = true; windowOpen = nil
+
+-- START GAME only appears once GO / Restart is bound (drivers need it).
+local buttons = {}
+ui.button = function(label) buttons[label] = true return false end
+game.resetGame(); buttons = {}; panels.drawMain(0.016)
+check('setup: no START GAME while the button is unbound', not buttons['START GAME'])
+bound = true; buttons = {}; panels.drawMain(0.016)
+check('setup: START GAME once the button is bound', buttons['START GAME'] == true)
+bound = false
+
+-- Window auto-hide: only with the HUD on and a button bound, only on phase changes.
+game.resetGame(); windowOpen = nil
 panels.autoHideWindow()
 check('window untouched on app load', windowOpen == nil)
 game.setup.playerCount = 2; game.startGame(); panels.autoHideWindow()

@@ -1,4 +1,4 @@
--- Random nickname generator: every player gets a noun from the chosen category,
+-- Random nickname generator: every player gets a noun from one random category,
 -- Trackmania hotseat style.
 
 local M = {}
@@ -51,12 +51,11 @@ M.categories = {
   },
 }
 
----Picks `count` unique nouns from a category (1-based index; out-of-range picks a random category).
----@param categoryIndex integer
+---Picks `count` unique nouns from a random category.
 ---@param count integer
 ---@return string[]
-function M.pick(categoryIndex, count)
-  local cat = M.categories[categoryIndex] or M.categories[math.random(#M.categories)]
+function M.pick(count)
+  local cat = M.categories[math.random(#M.categories)]
   local pool = {}
   for i = 1, #cat.nouns do pool[i] = cat.nouns[i] end
   for i = #pool, 2, -1 do

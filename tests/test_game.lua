@@ -100,6 +100,14 @@ game.setup.fuelSeconds = 100
 game.startGame()
 check(game.state.phase == game.PHASE_HANDOVER and game.state.current == 1, 'game starts in handover for player 1')
 check(#game.state.players == 3 and game.state.players[1].nick ~= game.state.players[2].nick, 'players have unique nicknames')
+local function categoryOf(nick)
+  for i, cat in ipairs(require('src/nicknames').categories) do
+    for _, noun in ipairs(cat.nouns) do if noun == nick then return i end end
+  end
+end
+local cat1 = categoryOf(game.state.players[1].nick)
+check(cat1 ~= nil and categoryOf(game.state.players[2].nick) == cat1 and categoryOf(game.state.players[3].nick) == cat1,
+  'nicknames come from one random category')
 
 -- Opening: player 1 sets 60s lap (with an invalid cut lap first).
 game.confirmHandover()
@@ -128,17 +136,31 @@ check(game.leaderIndex() == 2, 'leader is p2 (50s)')
 game.confirmHandover(); crossStartLine()
 local targets = game.getGhostTargets()
 check(#targets == 2, 'two ghosts on track (leader + player above)')
+local tm = require('src/tmui')
+check(targets[1].color == tm.playerColor(2) and targets[2].color == tm.playerColor(3),
+  'ghosts wear their players\' leaderboard colours (p2 leader, p3 above)')
 
 -- Checkpoint splits vs the player above (p3, 55s => CP1 at 11.0s).
 local cp1 = nil
+local stillLastRestarts = 0
+ac.tryToRestartSession = function() stillLastRestarts = stillLastRestarts + 1 end
 completeLap(59000, false, function(i) if i == 1 then cp1 = game.state.split end end)
 check(cp1 ~= nil and cp1.cp == 1 and cp1.n == 5, 'checkpoint 1 of 5 split recorded')
 check(cp1 ~= nil and cp1.delta ~= nil and math.abs(cp1.delta - (59000 / 5 - 11000)) < 1,
   'CP1 split is +0.800 vs p3 ghost (11.8s vs 11.0s)')
 
--- P1 improves but stays last -> keeps driving.
+-- P1 improves but stays last -> keeps driving, sent back to the grid for a
+-- standing start (no carrying a flying lap's speed into the next attempt).
 check(game.state.phase == game.PHASE_DRIVING and game.state.current == 1, 'still last, keeps driving')
 check(game.state.split and game.state.split.final and game.state.split.delta == 4000, 'finish split +4.000 vs p3')
+check(stillLastRestarts == 1, 'still last: session restarted for a standing start')
+check(game.state.message and game.state.message:find('Go again'), 'still last: "Go again" shown')
+car.lapCount, car.lapTimeMs = 0, 0 -- the session restart resets AC's lap counter
+tick()
+check(game.state.message and game.state.message:find('Go again'), '"Go again" survives the session restart')
+crossStartLine()
+
+ac.tryToRestartSession = function() end
 
 -- P1 beats p3 -> wheel passes to p3 (new last).
 local fastCp = nil
@@ -269,6 +291,24 @@ check(store.saved.players[game.state.current].fuel < savedFuel - 4, 'fuel saved 
 local rec = { count = 2, samples = { 0, 0,0,0, 0,0,1, 0,1,0, 0.1,  10000, 0,0,0, 0,0,1, 0,1,0, 0.3 } }
 check(math.abs(ghosts.checkpointTime(rec, 0.2) - 5000) < 1e-6, 'checkpoint time interpolated (5.000s at 0.2)')
 check(ghosts.checkpointTime(rec, 0.8) == nil, 'checkpoint never reached returns nil')
+
+-- Ghost model: lods.ini packed in data.acd (carData) and KN5 names that don't
+-- match the car folder (nohesi_bmw_e90 ships bmw_m3_e92_cs*.kn5). LOD files
+-- have no textures, so they must come with the main KN5 to borrow them from.
+local realCarData, realScan = ac.INIConfig.carData, io.scanDir
+local lods = { LOD_0 = 'bmw_m3_e92_cs.kn5', LOD_1 = 'bmw_m3_e92_cs_lod_b.kn5' }
+ac.INIConfig.carData = function() return { get = function(_, sec, _, def) return lods[sec] or def end } end
+io.scanDir = function() return { 'collider.kn5', 'bmw_m3_e92_cs_lod_b.kn5', 'bmw_m3_e92_cs.kn5' } end
+local dir = 'cars/nohesi_bmw_e90'
+local c = ghosts.modelCandidates(dir, 'nohesi_bmw_e90')
+check(c[1].file == dir .. '/bmw_m3_e92_cs_lod_b.kn5' and c[1].main == dir .. '/bmw_m3_e92_cs.kn5',
+  'ghost model: LOD_1 from packed lods.ini, with LOD_0 for textures')
+check(c[2].file == dir .. '/bmw_m3_e92_cs.kn5' and c[2].main == nil, 'ghost model: LOD_0 alone as second choice')
+ac.INIConfig.carData = function() error('no data') end
+c = ghosts.modelCandidates(dir, 'nohesi_bmw_e90')
+check(c[#c].file == dir .. '/bmw_m3_e92_cs.kn5' and c[#c].main == nil,
+  'ghost model: folder scan picks the main KN5 (not a LOD or the collider)')
+ac.INIConfig.carData, io.scanDir = realCarData, realScan
 
 print(failures == 0 and '\nALL TESTS PASSED' or ('\n' .. failures .. ' FAILURES'))
 os.exit(failures == 0 and 0 or 1)
