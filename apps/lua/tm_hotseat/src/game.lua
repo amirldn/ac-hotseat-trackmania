@@ -33,7 +33,15 @@ M.cfg = {
   fuelStepS = 30,         -- +/- step in setup
   minFuelS = 60,
   maxFuelS = 3600,
+  minLapFraction = 0.6,   -- a lap must cover this share of the track length (rejects out-laps)
+  teleportCheckFrames = 12, -- frames to wait before deciding a teleport method did nothing
+  teleportMinJumpM = 15,  -- the car must move at least this far for a teleport to count
+  saveIntervalS = 5,      -- persist fuel this often mid-turn, so a crash doesn't refund it
+  splitShowS = 3.5,       -- how long a checkpoint split stays on screen
 }
+
+-- Monotonic clock (seconds) for UI timers like split chips; advanced in update().
+M.clock = 0
 
 M.setup = {
   playerCount = 3,
@@ -55,6 +63,16 @@ M.state = {
   cutTimer = 0,
   lastLapTimeMs = nil,  -- previous frame's running lap timer, to spot external restarts
   overtime = false,     -- fuel ran out mid-turn: last-chance lap, restart to forfeit
+  lapDist = 0,          -- metres driven since the lap was armed (teleport jumps excluded)
+  lastPos = nil,        -- previous frame's car position { x, y, z } for lapDist
+  teleport = nil,       -- pending teleport being verified: { step, frames, x, y, z, slow }
+  saveTimer = 0,
+  -- Trackmania-style checkpoints: the lap is split into cpCount equal spline
+  -- sectors; crossing each one flashes your split against the target's ghost.
+  cpCount = 0,
+  cpNext = 1,
+  split = nil,          -- { cp, n, time, delta|nil, final, at } for the HUD chip
+  lastLap = nil,        -- { nick, time, delta|nil, vsNick|nil } shown on the handover card
 }
 
 -- ----------------------------------------------------------------------------
@@ -123,6 +141,20 @@ end
 function M.leaderIndex()
   local r = M.ranking()
   return #r > 0 and r[1].p.best and r[1].index or nil
+end
+
+---Whose time the active driver is chasing: in elimination the player directly
+---above them (beat them or you're out), in the opening round the leader.
+function M.splitTargetIndex()
+  local s = M.state
+  if s.current == nil then return nil end
+  if s.mode == M.MODE_ELIMINATION then return M.playerAbove(s.current) end
+  local leader = M.leaderIndex()
+  return leader ~= s.current and leader or nil
+end
+
+function M.checkpointCount()
+  return math.max(3, math.min(10, math.floor(M.trackLengthKm() / 0.8 + 0.5)))
 end
 
 ---Ghost targets for the active driver: overall leader + the player directly
@@ -202,6 +234,7 @@ function M.startGame()
   end
   s.mode = M.MODE_OPENING
   s.stampCounter = 0
+  s.outCounter = 0
   s.message = nil
   ghosts.clearAll()
   M.beginHandover(1)
@@ -232,6 +265,12 @@ function M.confirmHandover()
   s.cutTimer = 0
   s.lastLapTimeMs = nil
   s.overtime = false
+  s.lapDist = 0
+  s.lastPos = nil
+  s.cpCount = M.checkpointCount()
+  s.cpNext = 1
+  s.split = nil
+  s.saveTimer = 0
   ghosts.abortRecording()
   M.save()
 end
@@ -243,6 +282,10 @@ function M.armCleanLap()
   M.state.lapInvalid = false
   M.state.lapDirty = true
   M.state.cutTimer = 0
+  M.state.lapDist = 0
+  M.state.cpNext = 1
+  M.state.split = nil
+  M.state.message = nil
   ghosts.abortRecording()
 end
 
@@ -255,26 +298,65 @@ function M.requestRestart()
     onFuelOut()
     return
   end
-  M.teleportToStart()
   M.armCleanLap()
+  M.teleportToStart()
 end
 
----Best-effort teleport chain; not every CSP build/session allows every method.
-function M.teleportToStart()
-  local attempts = {
-    function() physics.teleportCarTo(0, ac.SpawnSet.HotlapStart) end,
-    function() physics.teleportCarTo(0, ac.SpawnSet.Start) end,
-    function() physics.teleportCarTo(0, ac.SpawnSet.Pits) end,
-    -- Last resort: restart the whole session. Our state lives in this app
-    -- (and in ac.storage), so nothing is lost except ghost recordings' AC-side
-    -- lap history, which we don't use anyway.
-    function() ac.tryToRestartSession() end,
-  }
-  for _, fn in ipairs(attempts) do
-    if pcall(fn) then return true end
+-- Best-effort teleport chain; not every CSP build/session allows every method.
+-- A call that doesn't throw isn't proof it worked (some builds silently ignore
+-- teleports from apps), so each attempt is verified a few frames later by
+-- checking the car actually jumped — if not, the next method is tried.
+local TELEPORTS = {
+  function() physics.teleportCarTo(0, ac.SpawnSet.HotlapStart) end,
+  function() physics.teleportCarTo(0, ac.SpawnSet.Start) end,
+  function() physics.teleportCarTo(0, ac.SpawnSet.Pits) end,
+  function() ac.tryToTeleportToPits() end,
+  -- Last resort: restart the whole session. Our state lives in this app (and
+  -- in ac.storage), so nothing is lost. Always trusted: the session reload is
+  -- picked up by the lap-counter drop in update().
+  function() ac.tryToRestartSession() end,
+}
+
+local function tryTeleportFrom(step)
+  local s = M.state
+  for i = step, #TELEPORTS do
+    -- Snapshot before the call: some methods move the car immediately.
+    local car = ac.getCar(0)
+    local p = car and car.position
+    local before = {
+      step = i, frames = 0,
+      x = p and p.x or 0, y = p and p.y or 0, z = p and p.z or 0,
+      slow = car ~= nil and (car.speedKmh or 0) < 3,
+    }
+    if pcall(TELEPORTS[i]) then
+      s.teleport = i < #TELEPORTS and before or nil
+      return true
+    end
   end
-  M.state.message = 'Teleport unavailable — drive back to the line'
+  s.teleport = nil
+  s.message = 'Teleport unavailable — drive back to the line'
   return false
+end
+
+function M.teleportToStart()
+  return tryTeleportFrom(1)
+end
+
+---Called every unpaused frame while a teleport is pending.
+local function verifyTeleport(car)
+  local t = M.state.teleport
+  t.frames = t.frames + 1
+  local p = car.position
+  local dx, dy, dz = p.x - t.x, p.y - t.y, p.z - t.z
+  if dx * dx + dy * dy + dz * dz > M.cfg.teleportMinJumpM ^ 2 then
+    M.state.teleport = nil -- it worked
+  elseif t.frames >= M.cfg.teleportCheckFrames then
+    if t.slow and (car.speedKmh or 0) < 3 then
+      M.state.teleport = nil -- was already parked at the spawn point
+    else
+      tryTeleportFrom(t.step + 1)
+    end
+  end
 end
 
 -- ----------------------------------------------------------------------------
@@ -307,6 +389,13 @@ local function onValidLap(lapMs)
   local s = M.state
   local p = s.players[s.current]
   if p == nil then return end
+
+  -- Finish split vs the time being chased (captured before rankings change).
+  local targetIdx = M.splitTargetIndex()
+  local target = targetIdx and s.players[targetIdx] or nil
+  local delta = target and target.best and (lapMs - target.best) or nil
+  s.lastLap = { nick = p.nick, time = lapMs, delta = delta, vsNick = target and target.nick or nil }
+  s.split = { final = true, n = s.cpCount, time = lapMs, delta = delta, at = M.clock }
 
   local improved = p.best == nil or lapMs < p.best
   if improved then
@@ -346,6 +435,9 @@ function onFuelOut()
   local p = s.players[s.current]
   p.eliminated = true
   p.fuel = 0
+  -- Elimination order decides final places (last one out finishes 2nd).
+  s.outCounter = (s.outCounter or 0) + 1
+  p.outOrder = s.outCounter
   s.overtime = false
   ghosts.abortRecording()
   if finishGameIfDecided() then return end
@@ -365,7 +457,46 @@ end
 -- Per-frame update
 -- ----------------------------------------------------------------------------
 
+---Accumulates distance driven this lap. Frame-to-frame jumps far beyond what
+---the car's speed allows are teleports/resets and don't count.
+local function trackDistance(car, dt)
+  local s, p = M.state, car.position
+  if p == nil then return end
+  local last = s.lastPos
+  if last ~= nil then
+    local dx, dy, dz = p.x - last.x, p.y - last.y, p.z - last.z
+    local step = math.sqrt(dx * dx + dy * dy + dz * dz)
+    local maxStep = math.max(30, (car.speedKmh or 0) / 3.6 * dt * 3 + 5)
+    if step <= maxStep then s.lapDist = s.lapDist + step end
+    last.x, last.y, last.z = p.x, p.y, p.z
+  else
+    s.lastPos = { x = p.x, y = p.y, z = p.z }
+  end
+end
+
+---Flashes a split when the car crosses the next checkpoint (equal spline
+---sectors). Only on a clean lap; the target's time comes from their ghost.
+local function trackCheckpoints(car)
+  local s = M.state
+  local n = s.cpCount
+  if s.lapDirty or n < 2 or s.cpNext >= n then return end
+  local progress = car.splinePosition
+  if progress == nil then return end
+  local edge = s.cpNext / n
+  -- Upper bound guards the wrap near the line (spline reads ~0.99 right before it).
+  if progress >= edge and progress < edge + 0.25 then
+    local delta = nil
+    local targetIdx = M.splitTargetIndex()
+    local rec = targetIdx and ghosts.recordings[targetIdx]
+    local targetMs = rec and ghosts.checkpointTime(rec, edge)
+    if targetMs then delta = car.lapTimeMs - targetMs end
+    s.split = { cp = s.cpNext, n = n, time = car.lapTimeMs, delta = delta, at = M.clock }
+    s.cpNext = s.cpNext + 1
+  end
+end
+
 function M.update(dt)
+  M.clock = M.clock + dt
   local s = M.state
   if s.phase ~= M.PHASE_DRIVING or s.current == nil then return end
   local car = ac.getCar(0)
@@ -376,6 +507,16 @@ function M.update(dt)
     local sm = sim()
     paused = sm.isPaused or sm.isReplayActive
   end)
+
+  if not paused and s.teleport ~= nil then verifyTeleport(car) end
+  if not paused then trackDistance(car, dt) end
+
+  -- Persist fuel now and then so an AC crash/app reload can't refund a turn.
+  s.saveTimer = s.saveTimer + dt
+  if s.saveTimer >= M.cfg.saveIntervalS then
+    s.saveTimer = 0
+    M.save()
+  end
 
   -- Fuel drains for the whole turn, restarts included. Running dry doesn't end
   -- the turn immediately: the driver gets a last-chance "overtime" to finish the
@@ -424,16 +565,28 @@ function M.update(dt)
     s.cutTimer = 0
   end
 
+  trackCheckpoints(car)
+
   -- Lap completion. lapCount can also go DOWN (session-restart fallback of
   -- the teleport chain) — re-anchor instead of waiting for it to catch up.
   if s.lapBase == nil or car.lapCount < s.lapBase then s.lapBase = car.lapCount end
   if car.lapCount > s.lapBase then
     local lapMs = car.previousLapTimeMs
     local counts = not s.lapInvalid and not s.lapDirty and lapMs ~= nil and lapMs > 0
+    -- Distance guard: if AC reset the lap timer on a teleport, the gate below
+    -- arms at the spawn point rather than the line, and the short run up to
+    -- the line would otherwise bank as a "lap".
+    local trackM = M.trackLengthKm() * 1000
+    if counts and s.lapDist < trackM * M.cfg.minLapFraction then
+      counts = false
+      s.message = 'Out-lap ignored — the next lap is the flying lap'
+    end
     s.lapBase = car.lapCount
     s.lapInvalid = false
     s.lapDirty = false
     s.cutTimer = 0
+    s.lapDist = 0
+    s.cpNext = 1
     if counts then
       -- onValidLap consumes the finished lap's buffer via ghosts.commitLap.
       onValidLap(lapMs)
@@ -446,8 +599,16 @@ function M.update(dt)
     s.lapDirty = false
     s.lapInvalid = false
     s.cutTimer = 0
+    s.lapDist = 0
+    s.cpNext = 1
     ghosts.onLineCross()
   end
+end
+
+---True while the active driver is between a restart and the timing line
+---(lap clock not yet meaningful; ghosts wait at the line).
+function M.waitingForLine()
+  return M.state.phase == M.PHASE_DRIVING and M.state.lapDirty
 end
 
 return M

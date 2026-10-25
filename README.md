@@ -21,9 +21,10 @@ Built as a **CSP Lua app** (requires [Custom Shaders Patch](https://acstuff.club
    fuel) and can be tweaked in 30-second steps.
 2. **Opening round** — players drive one at a time in a shuffled order. Your **fuel is a
    personal time budget**: it drains for every second of your turn and is *not* the car's
-   real fuel tank. Press **Restart Lap** (button in the app window, or `R` while the window
-   is focused) to teleport back to the line at any time — your fuel keeps draining, just
-   like Trackmania. As soon as you complete one **valid** lap (track cuts void the lap),
+   real fuel tank. Press **Restart Lap** (your bound button, the app window button, or `R`
+   while the window is focused) to teleport back to the line at any time — your fuel keeps draining, just
+   like Trackmania. Bind **Restart lap** to a wheel button in the setup screen so you never
+   need the mouse. As soon as you complete one **valid** lap (track cuts void the lap),
    your fuel drain pauses and the wheel passes to the next player.
 3. **Elimination** — once everyone has a time, the **worst-ranked player drives** and must
    beat the time of the player directly above them. Beat it and the wheel passes to the
@@ -34,13 +35,33 @@ Built as a **CSP Lua app** (requires [Custom Shaders Patch](https://acstuff.club
    that means you're out). An amber banner shows while you're in overtime.
 5. **Ghosts** — while driving you see up to two ghosts replaying in real time against your
    lap clock: 👑 the overall leader's best lap and ▲ the best lap of the player directly
-   above you. Ghosts are visual only (no collisions).
+   above you. Ghosts are visual only (no collisions) and wait on the line until you cross it.
+6. **Checkpoints** — the lap is split into 3–10 checkpoints (by track length). Crossing one
+   flashes your split against the time you're chasing: **blue** = ahead, **red** = behind.
 
 Sound cues play a **low buzz** when you void a lap (cut) and a **bright chime** when the
 wheel passes to the next player.
 
-The app window (dock it top-left) always shows every player's fuel bar, best lap and
-live standings, plus the target time you need to beat.
+### Trackmania HUD
+
+| Driving | Handover |
+|---|---|
+| ![Driving HUD](docs/hud-driving.png) | ![Handover card](docs/hud-handover.png) |
+
+*(Rendered from the real HUD code by `tools/render_hud_preview.lua`; in-game text is
+Segoe UI Black Italic.)*
+
+The HUD is drawn fullscreen, with no window chrome:
+
+- **Top-left leaderboard** — slanted plates in each player's colour that drain with their
+  fuel; gaps to the leader; the time you must beat in gold; eliminated players below.
+- **Bottom-centre** — lap clock, checkpoint splits, fuel gauge, and the target you're chasing.
+- **Banners** — LAP INVALID, LAST CHANCE, and a full-screen "pass the wheel to …" card
+  between turns, then the winner card.
+
+The app window becomes a small control panel (GO / Restart / settings): park it somewhere
+out of the way, or close it — the game keeps running and your bound buttons still work.
+Untick **Trackmania HUD** in setup to go back to the classic in-window standings.
 
 ## Installation
 
@@ -54,8 +75,8 @@ live standings, plus the target time you need to beat.
 2. **Drag the zip straight into Content Manager** — it detects the `apps/lua/tm_hotseat`
    folder inside and installs it for you. Done.
 3. Start any **single-player Practice or Hotlap session** (one car, any track), then open
-   the right-side apps taskbar and enable **TM Hotseat**. Drag the window to the top-left
-   corner.
+   the right-side apps taskbar and enable **TM Hotseat**. The HUD draws itself top-left;
+   park the app window anywhere else (it would cover the leaderboard top-left).
 
 ### Manual install
 
@@ -65,18 +86,25 @@ live standings, plus the target time you need to beat.
    ...\SteamApps\common\assettocorsa\apps\lua\tm_hotseat\manifest.ini
    ```
 3. Start a **single-player Practice or Hotlap session** (one car, any track).
-4. In-game, open the right-side apps taskbar and enable **TM Hotseat**. Drag the window to
-   the top-left corner.
+4. In-game, open the right-side apps taskbar and enable **TM Hotseat**. The HUD draws itself top-left;
+   park the app window anywhere else (it would cover the leaderboard top-left).
 
 ## Notes & troubleshooting
 
+- **HUD not showing / looks wrong**: untick *Trackmania HUD* in the setup screen to fall
+  back to in-window standings; any HUD error is printed in the app window. *HUD size*
+  scales it on top of automatic resolution scaling.
+- **Controls**: the setup screen has CSP binding widgets for *Restart lap* and *Ready (GO)*
+  — click one, then press a key or wheel/pad button. Binding both to the same button is fine.
 - **Restart/teleport**: the Restart button tries CSP's teleport (hotlap start → grid →
-  pits). If your CSP build/session doesn't allow teleporting, it falls back to restarting
+  pits), checking each one actually moved the car before trusting it. If your CSP
+  build/session doesn't allow teleporting, it falls back to restarting
   the session — the app keeps all scores, fuel levels and turn order across the restart
   (state is also persisted via `ac.storage`, so it survives an app reload; ghost
   recordings live in memory only and are lost on a full AC restart).
 - **Lap validity**: a lap is void if more than 2 wheels leave the track (with a short
-  grace period for kerb hops), or if you teleported mid-lap. Set AC's own penalties off —
+  grace period for kerb hops), if you teleported mid-lap, or if it covered less than 60%
+  of the track length (an out-lap from the spawn point). Set AC's own penalties off —
   the app does its own checking.
 - **Ghost model**: ghosts load your car's KN5 (preferring a lighter LOD from `lods.ini`).
   If the model can't be loaded on your build, a marker cross with the player's name is
@@ -87,17 +115,25 @@ live standings, plus the target time you need to beat.
 
 ```
 apps/lua/tm_hotseat/
-├── manifest.ini        CSP app manifest (window + render callback)
+├── manifest.ini        CSP app manifest (window, render + fullscreen UI callbacks)
 ├── tm_hotseat.lua      entry point, wires CSP callbacks
 ├── src/
-│   ├── game.lua        fuel, turns, opening/elimination state machine
-│   ├── ghosts.lua      best-lap recording, KN5 ghost playback
+│   ├── game.lua        fuel, turns, laps, checkpoints, opening/elimination state machine
+│   ├── ghosts.lua      best-lap recording, KN5 ghost playback, checkpoint times
+│   ├── overlay.lua     fullscreen Trackmania HUD
+│   ├── tmui.lua        TM drawing kit: slanted slabs, italic type, palette
+│   ├── panels.lua      app window: setup / handover / controls / results
+│   ├── controls.lua    bindable Restart / Ready buttons
+│   ├── settings.lua    persisted display settings
+│   ├── fmt.lua         time formatting
 │   ├── nicknames.lua   random noun nickname categories
-│   ├── panels.lua      setup / handover / driving / results UI
 │   └── sound.lua       2D sound cues (cut buzz, next-player chime)
 └── sfx/                invalid.wav, next.wav
 tests/
-└── test_game.lua       headless smoke test of the state machine
+├── test_game.lua       headless test of the state machine
+└── test_panels.lua     smoke test: every window panel, every phase, both HUD modes
+tools/
+└── render_hud_preview.lua  renders the fullscreen HUD to SVG without the game
 ```
 
 ## Development
@@ -106,8 +142,16 @@ The game logic runs headless with the `ac`/`ui` globals stubbed — from the rep
 
 ```
 luajit tests/test_game.lua
+luajit tests/test_panels.lua
 ```
 
-covers the full flow (opening laps, cut-lap rejection, elimination handovers, fuel-out
-elimination, restart persistence, winner detection). All CSP calls that vary between
+`test_game.lua` covers the full flow (opening laps, cut-lap and out-lap rejection,
+checkpoint splits, elimination handovers, fuel-out elimination, overtime, teleport
+verification, restart persistence, winner detection). All CSP calls that vary between
 builds are wrapped in `pcall` with fallbacks.
+
+To eyeball HUD changes without launching AC:
+
+```
+luajit tools/render_hud_preview.lua out/ && rsvg-convert -w 1200 out/3_handover.svg -o handover.png
+```

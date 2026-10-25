@@ -1,9 +1,14 @@
--- UI for the main window: setup, handover, driving HUD and results.
--- Dock the window in the top-left corner for the classic hotseat layout.
+-- UI for the main window: setup, handover, driving controls and results.
+-- With the fullscreen Trackmania HUD on (default) this window is just the
+-- control panel; with it off, the window shows the classic in-window standings.
 
 local game = require('src/game')
-local ghosts = require('src/ghosts')
 local nicknames = require('src/nicknames')
+local fmt = require('src/fmt')
+local tm = require('src/tmui')
+local settings = require('src/settings')
+local controls = require('src/controls')
+local overlay = require('src/overlay')
 
 local M = {}
 
@@ -19,19 +24,7 @@ local COL_DIM = rgbm(0.7, 0.7, 0.7, 1)
 -- Small helpers (guarded where CSP builds differ)
 -- ----------------------------------------------------------------------------
 
-local function fmtLap(ms)
-  if ms == nil then return '--:--.---' end
-  local t = math.floor(ms)
-  local m = math.floor(t / 60000)
-  local s = math.floor(t / 1000) % 60
-  local r = t % 1000
-  return string.format('%d:%02d.%03d', m, s, r)
-end
-
-local function fmtFuel(seconds)
-  local t = math.max(0, math.floor(seconds))
-  return string.format('%d:%02d', math.floor(t / 60), t % 60)
-end
+local fmtLap, fmtFuel, fmtClock = fmt.clock, fmt.fuel, fmt.clock
 
 local function colText(text, color)
   if not pcall(ui.textColored, text, color) then ui.text(text) end
@@ -74,28 +67,7 @@ end
 -- Trackmania-style name-plates
 -- ----------------------------------------------------------------------------
 
--- Stable per-player colours (keyed by the player's slot index, not their rank).
-local PLAYER_COLORS = {
-  rgbm(0.60, 0.25, 0.85, 1), -- violet
-  rgbm(0.93, 0.82, 0.15, 1), -- yellow
-  rgbm(0.28, 0.78, 0.32, 1), -- green
-  rgbm(0.90, 0.20, 0.18, 1), -- red
-  rgbm(0.96, 0.55, 0.13, 1), -- orange
-  rgbm(0.26, 0.68, 0.95, 1), -- blue
-  rgbm(0.80, 0.62, 0.42, 1), -- tan
-  rgbm(0.62, 0.64, 0.70, 1), -- steel
-}
-
-local function playerColor(idx)
-  return PLAYER_COLORS[(idx - 1) % #PLAYER_COLORS + 1]
-end
-
----MM:SS.mmm, e.g. 00:15.673 (Trackmania leaderboard clock).
-local function fmtClock(ms)
-  local t = math.max(0, math.floor(ms))
-  local m = math.floor(t / 60000)
-  return string.format('%02d:%06.3f', m, (t - m * 60000) / 1000)
-end
+local playerColor = tm.playerColor
 
 ---Leader shows their absolute lap; everyone else shows +gap to the leader.
 local function fmtGap(best, leaderBest)
@@ -203,6 +175,24 @@ local function drawSetup()
   if ui.button('Auto##fuel') then game.setup.fuelSeconds = game.defaultFuelSeconds() end
 
   ui.separator()
+  ui.text('Display')
+  if ui.checkbox('Trackmania HUD (fullscreen overlay)', settings.hudOverlay) then
+    settings.hudOverlay = not settings.hudOverlay
+  end
+  if settings.hudOverlay then
+    if ui.button('-##scale') then settings.hudScale = math.max(0.6, settings.hudScale - 0.1) end
+    ui.sameLine()
+    ui.text(string.format('  HUD size %d%%  ', math.floor(settings.hudScale * 100 + 0.5)))
+    ui.sameLine()
+    if ui.button('+##scale') then settings.hudScale = math.min(2.0, settings.hudScale + 0.1) end
+  end
+
+  ui.separator()
+  ui.text('Controls (keyboard, wheel or pad)')
+  controls.drawBinding('Restart lap', controls.restart)
+  controls.drawBinding('Ready (GO)', controls.ready)
+
+  ui.separator()
   if wideButton('START GAME', 44) then game.startGame() end
 end
 
@@ -263,8 +253,10 @@ local function drawHandover()
   end
   ui.separator()
   if wideButton('GO — I AM READY', 48) then game.confirmHandover() end
-  ui.separator()
-  drawStandings(false)
+  if not settings.hudOverlay then
+    ui.separator()
+    drawStandings(false)
+  end
 end
 
 -- ----------------------------------------------------------------------------
@@ -294,8 +286,32 @@ local function banner(label, bg, hint)
   if hint then colText(hint, COL_DIM) end
 end
 
+local function drawRestartControls()
+  if wideButton('RESTART LAP', 32) then game.requestRestart() end
+  -- Optional hotkey; signature varies between CSP builds, hence the guard.
+  pcall(function()
+    if ui.keyboardButtonPressed(ui.KeyIndex.R) then game.requestRestart() end
+  end)
+end
+
+---Control panel while the fullscreen HUD shows the race info.
+local function drawDrivingCompact()
+  local s = game.state
+  local p = s.players[s.current]
+  colText('ON THE WHEEL', COL_DIM)
+  bigText(p.nick)
+  ui.text('Fuel: ' .. fmtFuel(p.fuel) .. (s.overtime and '  (LAST CHANCE)' or ''))
+  ui.separator()
+  drawRestartControls()
+  colText('Bind Restart to a wheel button in setup.', COL_DIM)
+end
+
 local function drawDriving()
   local s = game.state
+  if settings.hudOverlay then
+    drawDrivingCompact()
+    return
+  end
 
   -- Trackmania driving view: nothing but the leaderboard bars. The current
   -- driver's own bar shows their fuel draining, so no separate fuel readout.
@@ -320,11 +336,7 @@ local function drawDriving()
   if s.message then colText(s.message, COL_GOLD) end
 
   ui.separator()
-  if wideButton('RESTART LAP', 32) then game.requestRestart() end
-  -- Optional hotkey; signature varies between CSP builds, hence the guard.
-  pcall(function()
-    if ui.keyboardButtonPressed(ui.KeyIndex.R) then game.requestRestart() end
-  end)
+  drawRestartControls()
 
   local targets = game.getGhostTargets()
   if #targets > 0 then
@@ -347,8 +359,10 @@ local function drawOver()
   colText('WINNER', COL_GOLD)
   hugeText(winner and winner.nick or '—')
   if winner and winner.best then bigText(fmtLap(winner.best)) end
-  ui.separator()
-  drawStandings(false)
+  if not settings.hudOverlay then
+    ui.separator()
+    drawStandings(false)
+  end
   ui.separator()
   if wideButton('NEW GAME', 40) then game.resetGame() end
 end
@@ -367,6 +381,12 @@ function M.drawMain(dt)
     drawDriving()
   else
     drawOver()
+  end
+
+  if settings.hudOverlay and overlay.lastError then
+    ui.separator()
+    colText('HUD error (untick the Trackmania HUD in setup to fall back):', COL_FUEL_LOW)
+    pcall(ui.textWrapped, overlay.lastError)
   end
 
   if phase ~= game.PHASE_SETUP then

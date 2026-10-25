@@ -13,18 +13,27 @@ vecMt = {
 function vec3(x, y, z) return setmetatable({ x = x or 0, y = y or 0, z = z or 0 }, vecMt) end
 function vec2(x, y) return { x = x, y = y } end
 function rgbm(r, g, b, m) return { r, g, b, m } end
-stringify = setmetatable({ parse = function(s) return s end }, { __call = function(_, t) return t end })
+local function deepCopy(t)
+  if type(t) ~= 'table' then return t end
+  local o = {}
+  for k, v in pairs(t) do o[k] = deepCopy(v) end
+  return o
+end
+-- Snapshot on save (like real serialisation) so tests can see what was persisted.
+stringify = setmetatable({ parse = function(s) return deepCopy(s) end }, { __call = function(_, t) return deepCopy(t) end })
 
 local car = {
   lapCount = 0, lapTimeMs = 0, previousLapTimeMs = 0, wheelsOutside = 0,
   position = vec3(), look = vec3(0, 0, 1), up = vec3(0, 1, 0),
+  speedKmh = 0, splinePosition = 0,
 }
 local simState = { isPaused = false, isReplayActive = false, trackLengthM = 4000 }
 
+local storages = {}
 ac = {
   getCar = function() return car end,
   getSim = function() return simState end,
-  storage = function(t) return t end,
+  storage = function(t, prefix) storages[prefix or ''] = t; return t end,
   tryToRestartSession = function() end,
   getCarID = function() return 'test_car' end,
   getFolder = function() return '/nonexistent' end,
@@ -48,25 +57,39 @@ end
 
 local function tick(dt)
   game.update(dt or 0.1)
-  ghosts.update(dt or 0.1, game.state.phase == game.PHASE_DRIVING)
+  ghosts.update(dt or 0.1, game.state.phase == game.PHASE_DRIVING, game.waitingForLine())
+end
+
+---Moves the car `metres` along +x during one tick, with a matching speed.
+local function drive(metres, dt)
+  dt = dt or 0.1
+  car.position = vec3(car.position.x + metres, car.position.y, car.position.z)
+  car.speedKmh = metres / dt * 3.6
+  tick(dt)
 end
 
 local function crossStartLine()
   car.lapTimeMs = 50 -- car just crossed the timing line
+  car.splinePosition = 0.001
   tick()
 end
 
-local function completeLap(ms, cut)
-  -- simulate the lap running
+local TRACK_M = 4000
+
+local function completeLap(ms, cut, onStep)
+  -- simulate the lap running: 5 steps of 800 m, spline 0.2 per step
   for i = 1, 5 do
     car.lapTimeMs = ms * i / 5
+    car.splinePosition = math.min(i / 5, 0.999)
     if cut then car.wheelsOutside = 4 end
-    tick()
+    drive(TRACK_M / 5)
     car.wheelsOutside = 0
+    if onStep then onStep(i) end
   end
   car.lapCount = car.lapCount + 1
   car.previousLapTimeMs = ms
   car.lapTimeMs = 20
+  car.splinePosition = 0.001
   tick()
 end
 
@@ -106,13 +129,23 @@ game.confirmHandover(); crossStartLine()
 local targets = game.getGhostTargets()
 check(#targets == 2, 'two ghosts on track (leader + player above)')
 
+-- Checkpoint splits vs the player above (p3, 55s => CP1 at 11.0s).
+local cp1 = nil
+completeLap(59000, false, function(i) if i == 1 then cp1 = game.state.split end end)
+check(cp1 ~= nil and cp1.cp == 1 and cp1.n == 5, 'checkpoint 1 of 5 split recorded')
+check(cp1 ~= nil and cp1.delta ~= nil and math.abs(cp1.delta - (59000 / 5 - 11000)) < 1,
+  'CP1 split is +0.800 vs p3 ghost (11.8s vs 11.0s)')
+
 -- P1 improves but stays last -> keeps driving.
-completeLap(59000)
 check(game.state.phase == game.PHASE_DRIVING and game.state.current == 1, 'still last, keeps driving')
+check(game.state.split and game.state.split.final and game.state.split.delta == 4000, 'finish split +4.000 vs p3')
 
 -- P1 beats p3 -> wheel passes to p3 (new last).
-completeLap(54000)
+local fastCp = nil
+completeLap(54000, false, function(i) if i == 1 then fastCp = game.state.split end end)
+check(fastCp and fastCp.delta and fastCp.delta < 0, 'ahead of target at CP1 gives a negative (blue) split')
 check(game.state.phase == game.PHASE_HANDOVER and game.state.current == 3, 'beaten player takes the wheel')
+check(game.state.lastLap and game.state.lastLap.delta == -1000, 'handover card shows -1.000 vs the beaten player')
 
 -- P3 runs out of fuel -> last-chance overtime (keeps driving, not eliminated).
 game.state.players[3].fuel = 0.05
@@ -182,6 +215,61 @@ car.lapCount = 0 -- session restart drops the lap counter
 tick()
 check(game.state.phase == game.PHASE_HANDOVER and game.state.current ~= cur2,
   'external restart during overtime forfeits to the next player')
+
+-- Out-lap guard: if a teleport resets AC's lap timer, the clean-lap gate arms
+-- at the spawn point; the short run to the line must not bank as a lap.
+game.resetGame()
+game.setup.playerCount = 2
+game.setup.fuelSeconds = 100
+game.startGame()
+local cur3 = game.state.current
+car.lapCount = 0
+game.confirmHandover()
+car.lapTimeMs = 100 -- timer reset by the teleport
+tick()
+check(not game.state.lapDirty, 'gate armed at spawn point (timer reset by teleport)')
+for _ = 1, 3 do car.lapTimeMs = car.lapTimeMs + 1000; drive(100) end
+car.lapCount = car.lapCount + 1
+car.previousLapTimeMs = 3300
+car.lapTimeMs = 20
+tick()
+check(game.state.players[cur3].best == nil and game.state.phase == game.PHASE_DRIVING, '300 m out-lap is not banked')
+check(game.state.message and game.state.message:find('Out%-lap'), 'out-lap message shown')
+completeLap(61000)
+check(game.state.players[cur3].best == 61000, 'following full lap banks normally')
+
+-- Teleport verification: a method that silently does nothing falls through.
+game.resetGame()
+game.setup.playerCount = 2
+game.setup.fuelSeconds = 100
+game.startGame()
+local calls = {}
+physics = {
+  teleportCarTo = function(_, spawn)
+    calls[#calls + 1] = spawn
+    if spawn == ac.SpawnSet.Start then car.position = vec3(car.position.x - 900, 0, 0) end
+  end,
+}
+game.confirmHandover()
+car.speedKmh = 120
+for _ = 1, 14 do tick() end
+check(#calls == 2 and calls[1] == ac.SpawnSet.HotlapStart and calls[2] == ac.SpawnSet.Start,
+  'no-op hotlap teleport detected, falls through to grid')
+tick()
+check(game.state.teleport == nil, 'teleport to grid verified by the jump')
+check(game.state.lapDist < 30, 'teleport jump not counted as distance driven')
+physics = {}
+
+-- Fuel is persisted mid-turn, so a crash/app reload can't refund it.
+local store = storages['tm_hotseat']
+local savedFuel = store.saved.players[game.state.current].fuel
+for _ = 1, 60 do tick() end
+check(store.saved.players[game.state.current].fuel < savedFuel - 4, 'fuel saved periodically while driving')
+
+-- Recorded checkpoint lookup interpolates between samples.
+local rec = { count = 2, samples = { 0, 0,0,0, 0,0,1, 0,1,0, 0.1,  10000, 0,0,0, 0,0,1, 0,1,0, 0.3 } }
+check(math.abs(ghosts.checkpointTime(rec, 0.2) - 5000) < 1e-6, 'checkpoint time interpolated (5.000s at 0.2)')
+check(ghosts.checkpointTime(rec, 0.8) == nil, 'checkpoint never reached returns nil')
 
 print(failures == 0 and '\nALL TESTS PASSED' or ('\n' .. failures .. ' FAILURES'))
 os.exit(failures == 0 and 0 or 1)

@@ -15,6 +15,7 @@ local M = {}
 
 local SAMPLE_INTERVAL = 1 / 20   -- seconds between samples
 local MAX_SAMPLES = 20 * 60 * 20 -- cap: 20 minutes of lap time per recording
+local STRIDE = 11                -- numbers per sample: time, pos xyz, look xyz, up xyz, spline progress
 
 -- Wired up by tm_hotseat.lua to avoid a require cycle with game.lua.
 -- Must return an array of { rec = recording, label = string, color = rgbm }.
@@ -60,7 +61,7 @@ end
 local function appendSample(car)
   local r = recording
   if r.count >= MAX_SAMPLES then return end
-  local s, base = r.samples, r.count * 10
+  local s, base = r.samples, r.count * STRIDE
   s[base + 1] = car.lapTimeMs
   s[base + 2] = car.position.x
   s[base + 3] = car.position.y
@@ -71,6 +72,7 @@ local function appendSample(car)
   s[base + 8] = car.up.x
   s[base + 9] = car.up.y
   s[base + 10] = car.up.z
+  s[base + 11] = car.splinePosition or -1
   r.count = r.count + 1
 end
 
@@ -145,19 +147,45 @@ local tmpPos, tmpLook, tmpUp = vec3(), vec3(), vec3()
 local function sampleAt(rec, t)
   local s, n = rec.samples, rec.count
   if n < 2 or t < s[1] then return nil end
-  if t > s[(n - 1) * 10 + 1] then return nil end
+  if t > s[(n - 1) * STRIDE + 1] then return nil end
   local lo, hi = 0, n - 1
   while hi - lo > 1 do
     local mid = math.floor((lo + hi) / 2)
-    if s[mid * 10 + 1] <= t then lo = mid else hi = mid end
+    if s[mid * STRIDE + 1] <= t then lo = mid else hi = mid end
   end
-  local a, b = lo * 10, hi * 10
+  local a, b = lo * STRIDE, hi * STRIDE
   local ta, tb = s[a + 1], s[b + 1]
   local f = tb > ta and (t - ta) / (tb - ta) or 0
   tmpPos:set(s[a + 2] + (s[b + 2] - s[a + 2]) * f, s[a + 3] + (s[b + 3] - s[a + 3]) * f, s[a + 4] + (s[b + 4] - s[a + 4]) * f)
   tmpLook:set(s[a + 5] + (s[b + 5] - s[a + 5]) * f, s[a + 6] + (s[b + 6] - s[a + 6]) * f, s[a + 7] + (s[b + 7] - s[a + 7]) * f)
   tmpUp:set(s[a + 8] + (s[b + 8] - s[a + 8]) * f, s[a + 9] + (s[b + 9] - s[a + 9]) * f, s[a + 10] + (s[b + 10] - s[a + 10]) * f)
   return tmpPos, tmpLook, tmpUp
+end
+
+---Lap time (ms) at which `rec` first reached spline progress `fraction`,
+---interpolated between samples; nil if the recording never got there (or was
+---made on a build without spline data). Cached per recording.
+function M.checkpointTime(rec, fraction)
+  rec.cpCache = rec.cpCache or {}
+  local cached = rec.cpCache[fraction]
+  if cached ~= nil then return cached or nil end
+  local s, result = rec.samples, false
+  local prevT, prevP = nil, nil
+  for i = 0, rec.count - 1 do
+    local t, p = s[i * STRIDE + 1], s[i * STRIDE + 11]
+    -- Same wrap guard as the live check: ignore readings just before the line.
+    if p ~= nil and p >= 0 and p >= fraction and p < fraction + 0.25 then
+      if prevT ~= nil and prevP ~= nil and prevP >= 0 and prevP < fraction and p > prevP then
+        result = prevT + (t - prevT) * (fraction - prevP) / (p - prevP)
+      else
+        result = t
+      end
+      break
+    end
+    prevT, prevP = t, p
+  end
+  rec.cpCache[fraction] = result
+  return result or nil
 end
 
 -- Markers drawn by script.draw3D when a slot has no loaded car model.
@@ -169,7 +197,8 @@ local fallbackMarkers = {}
 
 ---@param dt number
 ---@param drivingActive boolean @True while a player's turn is running.
-function M.update(dt, drivingActive)
+---@param waitingForLine boolean? @Driver hasn't crossed the line yet: ghosts wait at the start.
+function M.update(dt, drivingActive, waitingForLine)
   local car = ac.getCar(0)
   fallbackMarkers = {}
   if car == nil then return end
@@ -189,7 +218,10 @@ function M.update(dt, drivingActive)
     local target = targets[i]
     local shown = false
     if target and target.rec then
-      local pos, look, up = sampleAt(target.rec, car.lapTimeMs or 0)
+      -- Before the line the lap clock is meaningless (out-lap / post-teleport),
+      -- so park the ghost on its first sample, like Trackmania's waiting ghost.
+      local t = waitingForLine and target.rec.samples[1] or (car.lapTimeMs or 0)
+      local pos, look, up = sampleAt(target.rec, t)
       if pos ~= nil then
         local slot = ensureSlot(i)
         if slot.loaded and slot.node then
