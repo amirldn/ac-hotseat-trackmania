@@ -1,10 +1,8 @@
 # TM Hotseat — Trackmania-style hotseat mode for Assetto Corsa
 
-<img width="392" height="401" alt="image" src="https://github.com/user-attachments/assets/a07e9da0-2d4d-493a-b72b-9fc08a84e269" />
-<img width="392" height="401" alt="image" src="https://github.com/user-attachments/assets/a1bdd3db-a9e2-480a-accd-e48f8afe7ebc" />
+![Driving against a ghost: leaderboard top-left, lap clock and fuel bottom-centre](docs/ingame-driving.png)
 
-
-
+![Handover card: pass the wheel to the next player](docs/ingame-handover.png)
 
 Play hotlap battles with friends on **one PC**, Trackmania Hotseat style. Everyone gets a
 random nickname, takes turns setting laps on a shared "fuel" budget, and once everyone has
@@ -47,12 +45,8 @@ wheel passes to the next player.
 
 ### Trackmania HUD
 
-| Driving | Handover |
-|---|---|
-| ![Driving HUD](docs/hud-driving.png) | ![Handover card](docs/hud-handover.png) |
-
-*(Rendered from the real HUD code by `tools/render_hud_preview.lua`; in-game text is
-Segoe UI Black Italic.)*
+See the screenshots at the top: the driving HUD with Cyclops's ghost in their purple
+leaderboard colour, and the handover card between turns.
 
 The HUD is drawn fullscreen, with no window chrome:
 
