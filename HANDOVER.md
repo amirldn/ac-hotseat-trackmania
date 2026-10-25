@@ -5,7 +5,8 @@ covered by headless tests and rendered previews but has **not run in-game yet**.
 first job for a local session is to install it and run through the checklist below.
 
 Branch: `claude/trackmania-hotseat-ac-mod-jpoeo9` (based on
-`claude/trackmania-hotseat-assetto-corsa-nhf49u`). Merge it once the in-game check passes.
+`claude/trackmania-hotseat-assetto-corsa-nhf49u`). Merged into `main` (now the default
+branch) on 2026-10-25 after the in-game check; released as 2.0.0.
 
 ## What changed
 
