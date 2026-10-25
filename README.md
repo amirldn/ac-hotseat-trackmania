@@ -1,8 +1,8 @@
 # TM Hotseat — Trackmania-style hotseat mode for Assetto Corsa
 
-![Driving against a ghost: leaderboard top-left, lap clock and fuel bottom-centre](docs/ingame-driving.png)
+![Driving against a ghost: leaderboard top-left, lap clock and fuel bottom-centre](https://github.com/amirldn/ac-hotseat-trackmania/releases/download/2.0.0/ingame-driving.png)
 
-![Handover card: pass the wheel to the next player](docs/ingame-handover.png)
+![Handover card: pass the wheel to the next player](https://github.com/amirldn/ac-hotseat-trackmania/releases/download/2.0.0/ingame-handover.png)
 
 Play hotlap battles with friends on **one PC**, Trackmania Hotseat style. Everyone gets a
 random nickname, takes turns setting laps on a shared "fuel" budget, and once everyone has
