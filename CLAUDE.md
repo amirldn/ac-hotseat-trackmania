@@ -13,7 +13,7 @@ above them before their fuel runs out. See `README.md` for the player-facing rul
   - `tm_hotseat.lua` — entry point: CSP callbacks `script.update`, `windowMain`,
     `fullscreenUI` (IN_GAME), `draw3D` (TRANSPARENT).
   - `src/game.lua` — state machine (setup → handover → driving → over), fuel, lap
-    validity, teleport chain, checkpoint splits, persistence via `ac.storage`.
+    validity, restart (session restart), checkpoint splits, persistence via `ac.storage`.
   - `src/ghosts.lua` — 20 Hz lap recording (flat arrays, stride 11) and KN5 ghost playback.
   - `src/overlay.lua` + `src/tmui.lua` — fullscreen Trackmania HUD and its drawing kit.
   - `src/panels.lua` — the ImGui app window (setup, GO, restart, classic standings).
@@ -26,7 +26,8 @@ above them before their fuel runs out. See `README.md` for the player-facing rul
   The app must keep working (degraded) on older CSP builds — never let one missing API
   break the game loop. The overlay is wrapped too and reports errors in the app window.
 - Don't trust that a CSP call worked just because it didn't throw (e.g. teleports from
-  apps can be silently ignored) — verify the effect, as `verifyTeleport` does.
+  apps can be silently ignored) — verify the effect in-game. Restart uses a session
+  restart, not `physics.teleportCarTo`: after a teleport AC didn't start lap timing.
 - Match the existing style: 2-space indent, `local M = {}` modules, `---` doc comments on
   public functions, short comments that explain *why*.
 - Time formats come from `src/fmt.lua` (`MM:SS.mmm` clock, signed splits).

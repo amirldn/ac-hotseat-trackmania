@@ -23,7 +23,7 @@ Built as a **CSP Lua app** (requires [Custom Shaders Patch](https://acstuff.club
    personal time budget**: it drains for every second of your turn and is *not* the car's
    real fuel tank. Press **Restart Lap** (your bound button, the app window button, or `R`
    while the window is focused) to teleport back to the line at any time — your fuel keeps draining, just
-   like Trackmania. Bind **Restart lap** to a wheel button in the setup screen so you never
+   like Trackmania. Bind **GO / Restart** to a wheel button in the setup screen so you never
    need the mouse. As soon as you complete one **valid** lap (track cuts void the lap),
    your fuel drain pauses and the wheel passes to the next player.
 3. **Elimination** — once everyone has a time, the **worst-ranked player drives** and must
@@ -59,8 +59,9 @@ The HUD is drawn fullscreen, with no window chrome:
 - **Banners** — LAP INVALID, LAST CHANCE, and a full-screen "pass the wheel to …" card
   between turns, then the winner card.
 
-The app window becomes a small control panel (GO / Restart / settings): park it somewhere
-out of the way, or close it — the game keeps running and your bound buttons still work.
+The app window becomes a small control panel (GO / Restart / settings). Once *GO / Restart*
+is bound it hides itself while someone is driving and reopens between turns; you can reopen it
+from the taskbar at any time — the game keeps running and your bound button still works.
 Untick **Trackmania HUD** in setup to go back to the classic in-window standings.
 
 ## Installation
@@ -94,12 +95,14 @@ Untick **Trackmania HUD** in setup to go back to the classic in-window standings
 - **HUD not showing / looks wrong**: untick *Trackmania HUD* in the setup screen to fall
   back to in-window standings; any HUD error is printed in the app window. *HUD size*
   scales it on top of automatic resolution scaling.
-- **Controls**: the setup screen has CSP binding widgets for *Restart lap* and *Ready (GO)*
-  — click one, then press a key or wheel/pad button. Binding both to the same button is fine.
-- **Restart/teleport**: the Restart button tries CSP's teleport (hotlap start → grid →
-  pits), checking each one actually moved the car before trusting it. If your CSP
-  build/session doesn't allow teleporting, it falls back to restarting
-  the session — the app keeps all scores, fuel levels and turn order across the restart
+- **Controls**: the setup screen has one CSP binding widget, *GO / Restart* — click it, then
+  press a key or wheel/pad button. It starts your turn on the handover screen and restarts
+  the lap while driving. With it bound and the Trackmania HUD on, the app window hides
+  itself while driving (reopen it from the taskbar) and comes back between turns.
+- **Restart**: GO and Restart restart the AC session, exactly like *Restart session* in
+  the pause menu: you land on the session's spawn (the grid in Practice) and the lap clock
+  starts as you cross the line. Teleports aren't used — after a CSP teleport AC didn't
+  start timing on the next line crossing. The app keeps all scores, fuel levels and turn order across the restart
   (state is also persisted via `ac.storage`, so it survives an app reload; ghost
   recordings live in memory only and are lost on a full AC restart).
 - **Lap validity**: a lap is void if more than 2 wheels leave the track (with a short
@@ -123,7 +126,7 @@ apps/lua/tm_hotseat/
 │   ├── overlay.lua     fullscreen Trackmania HUD
 │   ├── tmui.lua        TM drawing kit: slanted slabs, italic type, palette
 │   ├── panels.lua      app window: setup / handover / controls / results
-│   ├── controls.lua    bindable Restart / Ready buttons
+│   ├── controls.lua    bindable GO / Restart button
 │   ├── settings.lua    persisted display settings
 │   ├── fmt.lua         time formatting
 │   ├── nicknames.lua   random noun nickname categories

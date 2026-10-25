@@ -223,7 +223,7 @@ local function handoverCard(S, scr)
   end
 
   local hint = 'PRESS GO IN THE TM HOTSEAT WINDOW'
-  if controls.hint(controls.ready, nil) then hint = 'PRESS YOUR READY BUTTON — OR GO IN THE WINDOW' end
+  if controls.bound() then hint = 'PRESS YOUR BUTTON TO GO' end
   tm.centerChip(cx, y + 18 * S, hint, 13 * S, tm.alpha(tm.panelDeep, 0.75), tm.dim)
 end
 

@@ -14,10 +14,11 @@ Branch: `claude/trackmania-hotseat-ac-mod-jpoeo9` (based on
   "first line crossing arms a clean lap" gate fired at the spawn point, so the short
   run to the line counted as a lap. Laps must now cover ≥ 60% of the track length;
   teleport jumps don't count as distance (`trackDistance`, `cfg.minLapFraction`).
-- **Teleport chain could stall.** `pcall(physics.teleportCarTo, …)` succeeds even if CSP
-  ignores the call for apps, so the fallbacks never ran. Each method is now verified
-  (the car must jump ≥ 15 m within 12 frames) before moving on; `ac.tryToTeleportToPits`
-  was added before the session-restart fallback.
+- **Restart = session restart.** The teleport chain was removed after in-game testing:
+  the hotlap start (deep in the last sector on Anglesey Club) and pits (just past the line)
+  left long out-laps, and after a grid teleport AC didn't start timing on the next line
+  crossing. GO/Restart now call `ac.tryToRestartSession` (`sendToStart`), same as the
+  pause-menu *Restart session*.
 - **Ghosts played back during the out-lap**, keyed off a meaningless lap clock. They now
   wait on the line until the driver crosses it.
 - **Fuel wasn't saved mid-turn**, so a crash/app reload refunded a turn's fuel. It's now
@@ -30,9 +31,10 @@ Branch: `claude/trackmania-hotseat-ac-mod-jpoeo9` (based on
   splits** (blue ahead / red behind, vs the time you're chasing), fuel gauge, LAP
   INVALID / LAST CHANCE banners, full-screen handover card and winner card. Scales with
   resolution; *HUD size* setting on top. Toggle off to get the old in-window standings.
-- **Bindable controls** (`src/controls.lua`): *Restart lap* and *Ready (GO)* via CSP's
-  binding widgets in the setup screen — works with wheel buttons.
-- Tests: 45 assertions in `tests/test_game.lua` (out-lap guard, teleport verification,
+- **Bindable control** (`src/controls.lua`): one *GO / Restart* button via CSP's binding
+  widget in the setup screen — GO on handover, restart while driving; works with wheel
+  buttons. With it bound and the HUD on, the app window hides itself while driving.
+- Tests: 45 assertions in `tests/test_game.lua` (out-lap guard, session restart,
   splits, periodic save, …) plus `tests/test_panels.lua`; preview tool in `tools/`.
 
 ## In-game checklist (riskiest first)
@@ -42,15 +44,16 @@ Branch: `claude/trackmania-hotseat-ac-mod-jpoeo9` (based on
    to confirm the fallback works.
 2. **Font and shapes**: is `Segoe UI` Black Italic rendering, and do the slanted slabs
    fill cleanly? (DirectWrite fonts and `ui.pathFillConvex` in the IN_GAME callback.)
-3. **Restart**: which teleport method actually works on this CSP build? Watch for the
-   chain falling through to a session restart (slow) when a teleport should have worked.
+3. **Restart**: GO/Restart restart the session (grid, just behind the line) and the
+   clock starts at the line. Check fuel/turn state survives the session restart.
 4. **Out-lap guard**: after a restart, does the out-lap get the "Out-lap ignored" message
    (expected if AC resets the timer on teleport), and does the next flying lap count?
    Check a normal lap on a long and a short track is never rejected.
 5. **Checkpoint splits**: appear on the second player's attempts once a ghost exists. If
    they never show, `car.splinePosition` may not start at the timing line on that track.
 6. **Ghosts** wait at the line during the out-lap, then run with the lap clock.
-7. **Bound buttons** work from the wheel, including Ready on the handover screen.
+7. **Bound button** works from the wheel: GO on the handover screen, restart while
+   driving; the app window hides while driving and reopens between turns.
 8. **Fuel save**: quit AC mid-turn, relaunch — fuel should not be refunded.
 9. **HUD size** looks right at your resolution (1080p = 100%).
 

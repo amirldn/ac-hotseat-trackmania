@@ -42,7 +42,7 @@ ac = {
   findNodes = function() error('no scene') end,
   SpawnSet = { HotlapStart = 1, Start = 2, Pits = 3 },
 }
-physics = {} -- no teleport -> game falls through to ac.tryToRestartSession
+physics = {}
 io.fileExists = function() return false end
 
 -- ---------------------------------------------------------------- harness
@@ -238,26 +238,25 @@ check(game.state.message and game.state.message:find('Out%-lap'), 'out-lap messa
 completeLap(61000)
 check(game.state.players[cur3].best == 61000, 'following full lap banks normally')
 
--- Teleport verification: a method that silently does nothing falls through.
+-- GO and Restart restart the session (the only way AC's timing resets with the
+-- car on the grid) — never a teleport, which left the first line crossing dead.
 game.resetGame()
 game.setup.playerCount = 2
 game.setup.fuelSeconds = 100
 game.startGame()
-local calls = {}
-physics = {
-  teleportCarTo = function(_, spawn)
-    calls[#calls + 1] = spawn
-    if spawn == ac.SpawnSet.Start then car.position = vec3(car.position.x - 900, 0, 0) end
-  end,
-}
+local restarts, teleports = 0, 0
+local realRestart = ac.tryToRestartSession
+ac.tryToRestartSession = function() restarts = restarts + 1 return true end
+physics = { teleportCarTo = function() teleports = teleports + 1 end }
 game.confirmHandover()
-car.speedKmh = 120
-for _ = 1, 14 do tick() end
-check(#calls == 2 and calls[1] == ac.SpawnSet.HotlapStart and calls[2] == ac.SpawnSet.Start,
-  'no-op hotlap teleport detected, falls through to grid')
+check(restarts == 1 and teleports == 0, 'GO restarts the session, no teleport')
 tick()
-check(game.state.teleport == nil, 'teleport to grid verified by the jump')
-check(game.state.lapDist < 30, 'teleport jump not counted as distance driven')
+game.requestRestart()
+check(restarts == 2 and teleports == 0, 'Restart restarts the session, no teleport')
+ac.tryToRestartSession = function() return false end
+game.requestRestart()
+check(game.state.message and game.state.message:find('drive back'), 'refused restart tells the driver')
+ac.tryToRestartSession = realRestart
 physics = {}
 
 -- Fuel is persisted mid-turn, so a crash/app reload can't refund it.

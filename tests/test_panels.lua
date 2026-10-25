@@ -9,6 +9,7 @@ function vec3(x, y, z) return { x = x or 0, y = y or 0, z = z or 0 } end
 function rgbm(r, g, b, m) return { r = r, g = g, b = b, mult = m } end
 stringify = setmetatable({ parse = function(s) return s end }, { __call = function(_, t) return t end })
 local calls = {}
+local bound, windowOpen = false, nil
 ui = setmetatable({
   Font = { Title = 1, Huge = 2 }, KeyIndex = { R = 82 },
   getCursor = function() return V2(0, 0) end, availableSpaceX = function() return 300 end,
@@ -18,12 +19,13 @@ ui.DWriteFont = setmetatable({ Weight = {}, Style = {} }, { __call = function() 
 local car = { lapCount = 0, lapTimeMs = 0, previousLapTimeMs = 0, wheelsOutside = 0, position = vec3(), look = vec3(), up = vec3(), speedKmh = 0 }
 ac = { getCar = function() return car end, getSim = function() return { trackLengthM = 3000 } end, storage = function(t) return t end,
   getUI = function() return { windowSize = V2(1920, 1080) } end,
-  ControlButton = function() return { onPressed = function() end, control = function() end, configured = function() return false end } end }
+  ControlButton = function() return { onPressed = function() end, control = function() end, configured = function() return bound end } end,
+  setWindowOpen = function(_, open) windowOpen = open end }
 physics = {}
 local game = require('src/game')
 local panels = require('src/panels')
 local settings = require('src/settings')
-require('src/controls').init({ restart = function() end, ready = function() end })
+require('src/controls').init(function() end)
 local function drawAll(label)
   for _, overlayOn in ipairs({ true, false }) do
     settings.hudOverlay = overlayOn
@@ -38,6 +40,29 @@ game.confirmHandover(); drawAll('driving')
 game.state.overtime, game.state.lapInvalid, game.state.message = true, true, 'hello'; drawAll('driving overtime+invalid')
 for _, p in ipairs(game.state.players) do p.eliminated = true end
 game.state.players[1].eliminated = false; game.state.players[1].best = 90000; game.state.phase = game.PHASE_OVER; drawAll('over')
+
+-- Window auto-hide: only with the HUD on and a button bound, only on phase changes.
+local function check(name, cond)
+  if not cond then failures = failures + 1 end
+  print((cond and 'PASS ' or 'FAIL ') .. name)
+end
+game.resetGame(); settings.hudOverlay = true; windowOpen = nil
+panels.autoHideWindow()
+check('window untouched on app load', windowOpen == nil)
+game.setup.playerCount = 2; game.startGame(); panels.autoHideWindow()
+check('window kept when no button is bound', windowOpen == nil)
+game.resetGame(); panels.autoHideWindow(); bound = true
+game.startGame(); panels.autoHideWindow()
+check('window stays on the handover screen (GO + Abandon)', windowOpen == nil)
+game.confirmHandover(); panels.autoHideWindow()
+check('window closes when driving starts', windowOpen == false)
+windowOpen = true; panels.autoHideWindow()
+check('player reopening it mid-turn is respected', windowOpen == true)
+windowOpen = false; game.state.phase = game.PHASE_HANDOVER; panels.autoHideWindow()
+check('window reopens at the next handover', windowOpen == true)
+game.confirmHandover(); panels.autoHideWindow()
+game.state.phase = game.PHASE_OVER; panels.autoHideWindow()
+check('window reopens for results', windowOpen == true)
 
 print(failures == 0 and '\nALL TESTS PASSED' or ('\n' .. failures .. ' FAILURES'))
 os.exit(failures == 0 and 0 or 1)

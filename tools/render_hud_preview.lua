@@ -50,7 +50,7 @@ physics = {}
 
 local game = require('src/game')
 local overlay = require('src/overlay')
-require('src/controls').init({ restart = function() end, ready = function() end })
+require('src/controls').init(function() end)
 
 local function players()
   game.state.players = {

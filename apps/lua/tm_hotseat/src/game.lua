@@ -34,8 +34,6 @@ M.cfg = {
   minFuelS = 60,
   maxFuelS = 3600,
   minLapFraction = 0.6,   -- a lap must cover this share of the track length (rejects out-laps)
-  teleportCheckFrames = 12, -- frames to wait before deciding a teleport method did nothing
-  teleportMinJumpM = 15,  -- the car must move at least this far for a teleport to count
   saveIntervalS = 5,      -- persist fuel this often mid-turn, so a crash doesn't refund it
   splitShowS = 3.5,       -- how long a checkpoint split stays on screen
 }
@@ -65,7 +63,6 @@ M.state = {
   overtime = false,     -- fuel ran out mid-turn: last-chance lap, restart to forfeit
   lapDist = 0,          -- metres driven since the lap was armed (teleport jumps excluded)
   lastPos = nil,        -- previous frame's car position { x, y, z } for lapDist
-  teleport = nil,       -- pending teleport being verified: { step, frames, x, y, z, slow }
   saveTimer = 0,
   -- Trackmania-style checkpoints: the lap is split into cpCount equal spline
   -- sectors; crossing each one flashes your split against the target's ghost.
@@ -256,7 +253,7 @@ function M.confirmHandover()
   local s = M.state
   s.phase = M.PHASE_DRIVING
   s.message = nil
-  M.teleportToStart()
+  M.sendToStart()
   -- The out-lap section up to the timing line never counts; recording starts
   -- once the line is crossed.
   s.lapBase = nil
@@ -299,64 +296,23 @@ function M.requestRestart()
     return
   end
   M.armCleanLap()
-  M.teleportToStart()
+  M.sendToStart()
 end
 
--- Best-effort teleport chain; not every CSP build/session allows every method.
--- A call that doesn't throw isn't proof it worked (some builds silently ignore
--- teleports from apps), so each attempt is verified a few frames later by
--- checking the car actually jumped — if not, the next method is tried.
-local TELEPORTS = {
-  function() physics.teleportCarTo(0, ac.SpawnSet.HotlapStart) end,
-  function() physics.teleportCarTo(0, ac.SpawnSet.Start) end,
-  function() physics.teleportCarTo(0, ac.SpawnSet.Pits) end,
-  function() ac.tryToTeleportToPits() end,
-  -- Last resort: restart the whole session. Our state lives in this app (and
-  -- in ac.storage), so nothing is lost. Always trusted: the session reload is
-  -- picked up by the lap-counter drop in update().
-  function() ac.tryToRestartSession() end,
-}
-
-local function tryTeleportFrom(step)
-  local s = M.state
-  for i = step, #TELEPORTS do
-    -- Snapshot before the call: some methods move the car immediately.
-    local car = ac.getCar(0)
-    local p = car and car.position
-    local before = {
-      step = i, frames = 0,
-      x = p and p.x or 0, y = p and p.y or 0, z = p and p.z or 0,
-      slow = car ~= nil and (car.speedKmh or 0) < 3,
-    }
-    if pcall(TELEPORTS[i]) then
-      s.teleport = i < #TELEPORTS and before or nil
-      return true
-    end
+-- Back to the line by restarting the session: the car lands on the session's
+-- spawn (the grid in Practice) with AC's lap timing reset, so crossing the line
+-- starts the clock. Teleports were dropped: after physics.teleportCarTo the
+-- first line crossing didn't start a lap in-game (CSP 0.3.0-preview542). Our
+-- state lives in this app (and in ac.storage), so nothing is lost; the reload
+-- is picked up by the lap-counter drop in update().
+function M.sendToStart()
+  local ok, restarted = pcall(ac.tryToRestartSession)
+  -- Older builds return nothing; only an explicit false means it was refused.
+  if not ok or restarted == false then
+    M.state.message = 'Restart unavailable — drive back to the line'
+    return false
   end
-  s.teleport = nil
-  s.message = 'Teleport unavailable — drive back to the line'
-  return false
-end
-
-function M.teleportToStart()
-  return tryTeleportFrom(1)
-end
-
----Called every unpaused frame while a teleport is pending.
-local function verifyTeleport(car)
-  local t = M.state.teleport
-  t.frames = t.frames + 1
-  local p = car.position
-  local dx, dy, dz = p.x - t.x, p.y - t.y, p.z - t.z
-  if dx * dx + dy * dy + dz * dz > M.cfg.teleportMinJumpM ^ 2 then
-    M.state.teleport = nil -- it worked
-  elseif t.frames >= M.cfg.teleportCheckFrames then
-    if t.slow and (car.speedKmh or 0) < 3 then
-      M.state.teleport = nil -- was already parked at the spawn point
-    else
-      tryTeleportFrom(t.step + 1)
-    end
-  end
+  return true
 end
 
 -- ----------------------------------------------------------------------------
@@ -508,7 +464,6 @@ function M.update(dt)
     paused = sm.isPaused or sm.isReplayActive
   end)
 
-  if not paused and s.teleport ~= nil then verifyTeleport(car) end
   if not paused then trackDistance(car, dt) end
 
   -- Persist fuel now and then so an AC crash/app reload can't refund a turn.
@@ -567,8 +522,8 @@ function M.update(dt)
 
   trackCheckpoints(car)
 
-  -- Lap completion. lapCount can also go DOWN (session-restart fallback of
-  -- the teleport chain) — re-anchor instead of waiting for it to catch up.
+  -- Lap completion. lapCount can also go DOWN (session restart from GO or
+  -- Restart) — re-anchor instead of waiting for it to catch up.
   if s.lapBase == nil or car.lapCount < s.lapBase then s.lapBase = car.lapCount end
   if car.lapCount > s.lapBase then
     local lapMs = car.previousLapTimeMs

@@ -189,8 +189,10 @@ local function drawSetup()
 
   ui.separator()
   ui.text('Controls (keyboard, wheel or pad)')
-  controls.drawBinding('Restart lap', controls.restart)
-  controls.drawBinding('Ready (GO)', controls.ready)
+  controls.drawBinding('GO / Restart', controls.action)
+  if controls.bound() and settings.hudOverlay then
+    colText('This window hides while driving; reopen it from the taskbar.', COL_DIM)
+  end
 
   ui.separator()
   if wideButton('START GAME', 44) then game.startGame() end
@@ -303,7 +305,7 @@ local function drawDrivingCompact()
   ui.text('Fuel: ' .. fmtFuel(p.fuel) .. (s.overtime and '  (LAST CHANCE)' or ''))
   ui.separator()
   drawRestartControls()
-  colText('Bind Restart to a wheel button in setup.', COL_DIM)
+  colText('Bind GO / Restart to a wheel button in setup.', COL_DIM)
 end
 
 local function drawDriving()
@@ -370,6 +372,31 @@ end
 -- ----------------------------------------------------------------------------
 
 local confirmReset = 0
+local lastPhase = nil
+local hiddenByUs = false
+
+local function setWindowOpen(open)
+  return pcall(ac.setWindowOpen, 'main', open)
+end
+
+---With the fullscreen HUD on and a button bound, the window isn't needed while
+---driving, so it closes then and reopens between turns (handover, results, setup)
+---where GO and Abandon live. Only acts on phase changes, so the player can still
+---reopen it from the taskbar mid-turn.
+function M.autoHideWindow()
+  local phase = game.state.phase
+  if phase == lastPhase then return end
+  local first = lastPhase == nil
+  lastPhase = phase
+  -- On app load, leave the window as the player left it.
+  if first then return end
+  local needed = phase ~= game.PHASE_DRIVING or not settings.hudOverlay or not controls.bound()
+  if needed then
+    if hiddenByUs and setWindowOpen(true) then hiddenByUs = false end
+  elseif setWindowOpen(false) then
+    hiddenByUs = true
+  end
+end
 
 function M.drawMain(dt)
   local phase = game.state.phase
